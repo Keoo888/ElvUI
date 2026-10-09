@@ -243,6 +243,9 @@ function UF:PostUpdateHealthColor(unit, r, g, b)
 
 		newr, newg, newb = ElvUF:ColorGradient(cur, max, 1, 0, 0, 1, 1, 0, r, g, b)
 		self:SetStatusBarColor(newr, newg, newb)
+		--! audit perf: oUF's UpdateColor now skips repainting an unchanged colour; this overwrites
+		--! the bar behind its back, so clear its record or the bar sticks on the last gradient.
+		self.colorR = nil
 	end
 
 	if self.bg then

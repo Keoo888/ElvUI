@@ -220,6 +220,9 @@ function UF:PostUpdatePowerColor()
 
 		if not self.colorClass then
 			self:SetStatusBarColor(color[1], color[2], color[3])
+			--! audit perf: same as the health twin -- oUF's UpdateColor skips an unchanged colour,
+			--! so clear its record after painting over the bar here.
+			self.colorR = nil
 
 			if self.BG then
 				UF:UpdateBackdropTextureColor(self.BG, color[1], color[2], color[3])

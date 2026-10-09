@@ -48,12 +48,33 @@ local function ToggleAlpha(self, element, endAlpha)
 	element:ClearTimers()
 
 	if element.Smooth then
-		E:UIFrameFadeOut(self, element.Smooth, self:GetAlpha(), endAlpha)
-	else
+		local startAlpha = self:GetAlpha()
+
+		--! audit perf: a fade from the alpha the frame already has to that same alpha is invisible, but
+		--! it still handed the frame to the fade manager -- which then paid IsVisible + SetAlpha on it
+		--! 20 times a second. onRangeUpdate re-armed that every 0.2 s, so the manager never stopped.
+		if startAlpha == endAlpha then
+			E:UIFrameFadeRemoveFrame(self) -- and drop a fade now heading the wrong way
+			return
+		end
+
+		--! audit perf+fix: restarting a running fade toward the same target reset its clock, so a 0.33 s
+		--! fade re-armed every 0.2 s never finished and never left the manager. Let it run instead.
+		local info = self.FadeObject
+		if info and info.fadeTimer and info.endAlpha == endAlpha then
+			return
+		end
+
+		E:UIFrameFadeOut(self, element.Smooth, startAlpha, endAlpha)
+	elseif self:GetAlpha() ~= endAlpha then
+		--! audit perf: SetAlpha invalidates the whole child subtree; the read does not.
 		self:SetAlpha(endAlpha)
 	end
 end
 
+--! audit perf: every unit event below is registered unitless on purpose, so GAP-028 leaves
+--! Fader alone: the SetAlpha(1) branch in Update runs BEFORE the unit test, so a foreign
+--! unit still does work here and dropping it in the dispatcher would not be equivalent.
 local function Update(self, _, unit)
 	local element = self.Fader
 	if self.isForced or (not element or not element.count or element.count <= 0) then
@@ -185,7 +206,7 @@ local options = {
 		enable = function(self)
 			self:RegisterEvent('PLAYER_REGEN_ENABLED', Update, true)
 			self:RegisterEvent('PLAYER_REGEN_DISABLED', Update, true)
-			self:RegisterEvent('UNIT_FLAGS', Update)
+			self:RegisterEvent('UNIT_FLAGS', Update, true)
 		end,
 		events = {'PLAYER_REGEN_ENABLED','PLAYER_REGEN_DISABLED','UNIT_FLAGS'}
 	},
@@ -202,7 +223,7 @@ local options = {
 				self:SetAlpha(0)
 			end
 
-			self:RegisterEvent('UNIT_TARGET', Update)
+			self:RegisterEvent('UNIT_TARGET', Update, true)
 			self:RegisterEvent('PLAYER_TARGET_CHANGED', Update, true)
 			self:RegisterEvent('PLAYER_FOCUS_CHANGED', Update, true)
 		end,
@@ -221,17 +242,17 @@ local options = {
 	},
 	Health = {
 		enable = function(self)
-			self:RegisterEvent('UNIT_HEALTH', Update)
-			self:RegisterEvent('UNIT_MAXHEALTH', Update)
+			self:RegisterEvent('UNIT_HEALTH', Update, true)
+			self:RegisterEvent('UNIT_MAXHEALTH', Update, true)
 		end,
 		events = {'UNIT_HEALTH','UNIT_MAXHEALTH'}
 	},
 	Power = {
 		enable = function(self)
-			self:RegisterEvent('UNIT_MANA', Update)
-			self:RegisterEvent('UNIT_MAXMANA', Update)
-			self:RegisterEvent('UNIT_ENERGY', Update)
-			self:RegisterEvent('UNIT_MAXENERGY', Update)
+			self:RegisterEvent('UNIT_MANA', Update, true)
+			self:RegisterEvent('UNIT_MAXMANA', Update, true)
+			self:RegisterEvent('UNIT_ENERGY', Update, true)
+			self:RegisterEvent('UNIT_MAXENERGY', Update, true)
 
 		end,
 		events = {'UNIT_MANA','UNIT_MAXMANA','UNIT_ENERGY','UNIT_MAXENERGY'}
@@ -245,12 +266,12 @@ local options = {
 	},
 	Casting = {
 		enable = function(self)
-			self:RegisterEvent('UNIT_SPELLCAST_START', Update)
-			self:RegisterEvent('UNIT_SPELLCAST_FAILED', Update)
-			self:RegisterEvent('UNIT_SPELLCAST_STOP', Update)
-			self:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED', Update)
-			self:RegisterEvent('UNIT_SPELLCAST_CHANNEL_START', Update)
-			self:RegisterEvent('UNIT_SPELLCAST_CHANNEL_STOP', Update)
+			self:RegisterEvent('UNIT_SPELLCAST_START', Update, true)
+			self:RegisterEvent('UNIT_SPELLCAST_FAILED', Update, true)
+			self:RegisterEvent('UNIT_SPELLCAST_STOP', Update, true)
+			self:RegisterEvent('UNIT_SPELLCAST_INTERRUPTED', Update, true)
+			self:RegisterEvent('UNIT_SPELLCAST_CHANNEL_START', Update, true)
+			self:RegisterEvent('UNIT_SPELLCAST_CHANNEL_STOP', Update, true)
 		end,
 		events = {'UNIT_SPELLCAST_START','UNIT_SPELLCAST_FAILED','UNIT_SPELLCAST_STOP','UNIT_SPELLCAST_INTERRUPTED','UNIT_SPELLCAST_CHANNEL_START','UNIT_SPELLCAST_CHANNEL_STOP'}
 	},

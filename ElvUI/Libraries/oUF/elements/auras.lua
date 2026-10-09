@@ -221,12 +221,23 @@ local function updateIcon(element, unit, index, offset, filter, isDebuff, visibl
 			-- We might want to consider delaying the creation of an actual cooldown
 			-- object to this point, but I think that will just make things needlessly
 			-- complicated.
+			--! audit perf: expiration is an absolute time, so start/duration are bit-identical on
+			--! every pass until the aura is actually refreshed. ElvUI hooks SetCooldown
+			--! (Core/Cooldowns.lua), so each redundant call also ran E.OnSetCooldown.
 			if(button.cd and not element.disableCooldown) then
+				local cd = button.cd
 				if(duration and duration > 0) then
-					button.cd:SetCooldown(expiration - duration, duration)
-					button.cd:Show()
-				else
-					button.cd:Hide()
+					local start = expiration - duration
+					if(cd.cachedStart ~= start or cd.cachedDuration ~= duration) then
+						cd.cachedStart, cd.cachedDuration = start, duration
+
+						cd:SetCooldown(start, duration)
+						cd:Show()
+					end
+				elseif(cd.cachedStart ~= false) then
+					cd.cachedStart, cd.cachedDuration = false, false
+
+					cd:Hide()
 				end
 			end
 
@@ -234,7 +245,16 @@ local function updateIcon(element, unit, index, offset, filter, isDebuff, visibl
 				if((isDebuff and element.showDebuffType) or (not isDebuff and element.showBuffType) or element.showType) then
 					local color = element.__owner.colors.debuff[debuffType] or element.__owner.colors.debuff.none
 
-					button.overlay:SetVertexColor(color[1], color[2], color[3])
+					--! audit perf: cached by value, not by table identity, so editing a colour in
+					--! place still repaints. Hide() does not clear a vertex colour, so the Hide
+					--! path below needs no invalidation.
+					local r, g, b = color[1], color[2], color[3]
+					if(button.overlayR ~= r or button.overlayG ~= g or button.overlayB ~= b) then
+						button.overlayR, button.overlayG, button.overlayB = r, g, b
+
+						button.overlay:SetVertexColor(r, g, b)
+					end
+
 					button.overlay:Show()
 				else
 					button.overlay:Hide()
@@ -249,14 +269,46 @@ local function updateIcon(element, unit, index, offset, filter, isDebuff, visibl
 				end
 			end
 
-			if(button.icon) then button.icon:SetTexture(texture) end
-			if(button.count) then button.count:SetText(count > 1 and count) end
+			--! audit perf: an aura keeps its icon, its stack count and its slot size for as long as
+			--! it sits in that slot, yet all six writes below fired on every UNIT_AURA pass.
+			--! Invalidated by the gap-button block in filterIcons and by UF:UpdateAuraSettings.
+			if(button.icon) then
+				if(button.cachedTexture ~= texture) then
+					button.cachedTexture = texture
+
+					button.icon:SetTexture(texture)
+				end
+			end
+
+			if(button.count) then
+				local text = count > 1 and count
+				if(button.cachedCount ~= text) then
+					button.cachedCount = text
+
+					button.count:SetText(text)
+				end
+			end
 
 			local size = element.size or 16
-			button:SetSize(size, size)
+			if(button.cachedSize ~= size) then
+				button.cachedSize = size
 
-			button:EnableMouse(not element.disableMouse)
-			button:SetID(index)
+				button:SetSize(size, size)
+			end
+
+			local mouse = not element.disableMouse
+			if(button.cachedMouse ~= mouse) then
+				button.cachedMouse = mouse
+
+				button:EnableMouse(mouse)
+			end
+
+			if(button.cachedID ~= index) then
+				button.cachedID = index
+
+				button:SetID(index)
+			end
+
 			button:Show()
 
 			--[[ Callback: Auras:PostUpdateIcon(unit, button, index, position)
@@ -387,13 +439,16 @@ local function UpdateAuras(self, event, unit)
 			end
 
 			-- Prevent the button from displaying anything.
-			if(button.cd) then button.cd:Hide() end
-			if(button.icon) then button.icon:SetTexture() end
+			--! audit perf: this slot gets reused by a real aura later, so clear the records
+			--! updateIcon keeps or it would skip restoring what is wiped here.
+			if(button.cd) then button.cd:Hide() button.cd.cachedStart = nil end
+			if(button.icon) then button.icon:SetTexture() button.cachedTexture = nil end
 			if(button.overlay) then button.overlay:Hide() end
 			if(button.stealable) then button.stealable:Hide() end
-			if(button.count) then button.count:SetText() end
+			if(button.count) then button.count:SetText() button.cachedCount = nil end
 
 			button:EnableMouse(false)
+			button.cachedMouse = false
 			button:Show()
 
 			--[[ Callback: Auras:PostUpdateGapIcon(unit, gapButton, visibleBuffs)

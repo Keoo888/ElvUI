@@ -45,11 +45,17 @@ end
 function mod:ExperienceBar_QuestXPUpdate(event)
 	if event == "ZONE_CHANGED_NEW_AREA" and not self.db.experience.questXP.questCurrentZoneOnly then return end
 
+	--! WotLK 3.3.5a fix: at load ExperienceBar_Toggle -> QuestXPToggle -> QuestXPUpdate
+	--! runs BEFORE the first ExperienceBar_Update, so expBar.curExp/maxExp are still
+	--! nil and SetMinMaxValues(0, nil) throws a Usage error. Fall back to live values.
+	local curExp = self.expBar.curExp or UnitXP("player")
+	local maxExp = self.expBar.maxExp or max(1, UnitXPMax("player"))
+
 	self.questTotalXP = getQuestXP(self.db.experience.questXP.questCompletedOnly, self.db.experience.questXP.questCurrentZoneOnly)
 
 	if self.questTotalXP > 0 then
-		self.expBar.questBar:SetMinMaxValues(0, self.expBar.maxExp)
-		self.expBar.questBar:SetValue(min(self.expBar.curExp + self.questTotalXP, self.expBar.maxExp))
+		self.expBar.questBar:SetMinMaxValues(0, maxExp)
+		self.expBar.questBar:SetValue(min(curExp + self.questTotalXP, maxExp))
 		self.expBar.questBar:Show()
 	else
 		self.expBar.questBar:Hide()

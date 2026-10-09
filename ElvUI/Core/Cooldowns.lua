@@ -117,6 +117,13 @@ end
 function E:Cooldown_StopTimer(cd)
 	cd.enabled = nil
 	cd:Hide()
+
+	--! audit perf: cd.enabled is never set true, so Cooldown_OnSizeChanged's revive branch is
+	--! dead and only OnSetCooldown's timer:Show() brings a stopped timer back. oUF's aura
+	--! element now skips an unchanged SetCooldown, so drop its record or the text stays dark.
+	if cd.parent then
+		cd.parent.cachedStart = nil
+	end
 end
 
 function E:Cooldown_Options(timer, db, parent)

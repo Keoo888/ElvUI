@@ -258,11 +258,9 @@ local function Update(self, event, unit)
 			if element.onlyMatchSpellID then
 				debuff = debuff_data[spellId]
 			else
-				if debuff_data[spellId] then
-					debuff = debuff_data[spellId]
-				else
-					debuff = debuff_data[name]
-				end
+				--! audit perf: the spellID slot was hashed twice for one answer. Values in
+				--! debuff_data are always tables, so `or` cannot swallow a false entry.
+				debuff = debuff_data[spellId] or debuff_data[name]
 			end
 
 			priority = debuff and debuff.priority

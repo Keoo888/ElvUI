@@ -48,18 +48,21 @@ local function OnEvent(self, event, ...)
 		if not events[select(2, ...)] then return end
 
 		local id = select(3, ...)
-		if id == playerID or id == petID then
-			if timeStamp == 0 then
-				timeStamp = ...
-			end
+		--! audit perf: a heal row from anyone else touches neither healTotal nor combatTime, so the
+		--! text GetHPS would redraw is byte-identical -- yet it fell through to SetFormattedText on
+		--! every such row. In a raid of healers that is most of the log. Ours still repaint.
+		if id ~= playerID and id ~= petID then return end
 
-			lastSegment = timeStamp
-			combatTime = (...) - timeStamp
-
-			local overHeal = select(13, ...)
-			lastHealAmount = select(12, ...)
-			healTotal = healTotal + max(0, lastHealAmount - overHeal)
+		if timeStamp == 0 then
+			timeStamp = ...
 		end
+
+		lastSegment = timeStamp
+		combatTime = (...) - timeStamp
+
+		local overHeal = select(13, ...)
+		lastHealAmount = select(12, ...)
+		healTotal = healTotal + max(0, lastHealAmount - overHeal)
 	elseif event == "UNIT_PET" then
 		petID = UnitGUID("pet")
 	elseif event == "PLAYER_ENTERING_WORLD" then

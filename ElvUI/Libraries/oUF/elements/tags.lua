@@ -490,8 +490,13 @@ local frame = CreateFrame('Frame')
 frame:SetScript('OnEvent', function(self, event, unit)
 	local strings = events[event]
 	if(strings) then
+		--! audit perf: events[event] is one flat list of every tagged fontstring, so a unit event
+		--! walked all of them and paid a C IsVisible() per entry only to drop every other unit.
+		--! Hoist the per-event unitless answer and test the unit first -- both are table reads.
+		local unitless = unitlessEvents[event]
+
 		for _, fontstring in next, strings do
-			if(fontstring:IsVisible() and (unitlessEvents[event] or fontstring.parent.unit == unit)) then
+			if((unitless or fontstring.parent.unit == unit) and fontstring:IsVisible()) then
 				fontstring:UpdateTag()
 			end
 		end

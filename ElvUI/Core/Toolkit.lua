@@ -129,6 +129,10 @@ local function SetTemplate(frame, template, glossTex, ignoreUpdates, forcePixelM
 	end
 	frame:SetBackdropBorderColor(borderr, borderg, borderb)
 
+	--! audit perf: UF:PostUpdateAura skips an unchanged border colour on aura buttons, and this
+	--! runs on construct, on E:UpdateFrameTemplates and from every direct SetTemplate call.
+	frame.borderR = nil
+
 	if not frame.ignoreUpdates then
 		if frame.isUnitFrameElement then
 			E.unitFrameElements[frame] = true

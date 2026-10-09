@@ -3,10 +3,18 @@ local NP = E:GetModule("NamePlates")
 local LSM = E.Libs.LSM
 
 --Lua functions
+local tinsert = table.insert
 --WoW API / Variables
+local CreateFrame = CreateFrame
+--! audit perf: Update_HealthColor reads this per health tick of every visible plate. The
+--! 18 other files that cache it at load prove it is never reassigned; CUSTOM_CLASS_COLORS
+--! stays a live global read because a separate addon may create it after we load.
+local RAID_CLASS_COLORS = RAID_CLASS_COLORS
 
 function NP:Update_HealthOnValueChanged()
-	local frame = self:GetParent().UnitFrame
+	--! audit perf: field set next to the hook in OnCreated, instead of a C call plus a
+	--! table read on every health tick of every visible plate.
+	local frame = self.unitFrame
 	if not frame.UnitType then return end -- Bugs
 
 	NP:Update_Health(frame)
@@ -21,10 +29,19 @@ function NP:Update_HealthColor(frame)
 	local r, g, b
 	local scale = 1
 
-	local class = frame.UnitClass
-	local classColor = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[class] or RAID_CLASS_COLORS[class]
-	local useClassColor = NP.db.units[frame.UnitType].health.useClassColor
-	if classColor and ((frame.UnitType == "FRIENDLY_PLAYER" and useClassColor) or (frame.UnitType == "ENEMY_PLAYER" and useClassColor)) then
+	--! audit perf: the class colour and the five-deep db walk were paid before the test that
+	--! throws both away -- every NPC plate and every player plate with useClassColor off.
+	--! Cheapest discriminator first, foreign table last. Same guard the sibling Name.lua has.
+	local unitType = frame.UnitType
+	local classColor
+	if unitType == "FRIENDLY_PLAYER" or unitType == "ENEMY_PLAYER" then
+		local class = frame.UnitClass
+		if class and NP.db.units[unitType].health.useClassColor then
+			classColor = CUSTOM_CLASS_COLORS and CUSTOM_CLASS_COLORS[class] or RAID_CLASS_COLORS[class]
+		end
+	end
+
+	if classColor then
 		r, g, b = classColor.r, classColor.g, classColor.b
 	else
 		local db = self.db.colors
@@ -68,7 +85,7 @@ function NP:Update_HealthColor(frame)
 			if reactionType == 4 then
 				r, g, b = db.reactions.neutral.r, db.reactions.neutral.g, db.reactions.neutral.b
 			elseif reactionType and reactionType > 4 then
-				if frame.UnitType == "FRIENDLY_PLAYER" then
+				if unitType == "FRIENDLY_PLAYER" then
 					r, g, b = db.reactions.friendlyPlayer.r, db.reactions.friendlyPlayer.g, db.reactions.friendlyPlayer.b
 				else
 					r, g, b = db.reactions.good.r, db.reactions.good.g, db.reactions.good.b
@@ -84,8 +101,11 @@ function NP:Update_HealthColor(frame)
 			frame.Health:SetStatusBarColor(r, g, b)
 
 			if frame.HealthColorChangeCallbacks then
-				for _, cb in ipairs(frame.HealthColorChangeCallbacks) do
-					cb(self, frame, r, g, b)
+				--! audit perf: a dense array built only by tinsert below, so a numeric for is
+				--! exact and drops the ipairs global plus its iterator call per tick per plate.
+				local cbs = frame.HealthColorChangeCallbacks
+				for i = 1, #cbs do
+					cbs[i](self, frame, r, g, b)
 				end
 			end
 		end
@@ -106,19 +126,28 @@ function NP:Update_Health(frame)
 
 	local health = frame.oldHealthBar:GetValue()
 	local _, maxHealth = frame.oldHealthBar:GetMinMaxValues()
-	frame.Health:SetMinMaxValues(0, maxHealth)
+	--! audit perf: max health changes on buffs and level-ups, not on every tick, and this is
+	--! the only writer of the bar's range. Skipping the equal write costs no clamping.
+	if frame.Health.maxSetValue ~= maxHealth then
+		frame.Health.maxSetValue = maxHealth
+		frame.Health:SetMinMaxValues(0, maxHealth)
+	end
 
 	if frame.HealthValueChangeCallbacks then
-		for _, cb in ipairs(frame.HealthValueChangeCallbacks) do
-			cb(self, frame, health, maxHealth)
+		local cbs = frame.HealthValueChangeCallbacks
+		for i = 1, #cbs do
+			cbs[i](self, frame, health, maxHealth)
 		end
 	end
 
 	frame.Health:SetValue(health)
 	frame.FlashTexture:Point("TOPRIGHT", frame.Health:GetStatusBarTexture(), "TOPRIGHT") --idk why this fixes this
 
-	if self.db.units[frame.UnitType].health.text.enable then
-		frame.Health.Text:SetText(E:GetFormattedText(self.db.units[frame.UnitType].health.text.format, health, maxHealth))
+	--! audit perf: the same five-deep path was walked twice per health tick of every visible
+	--! plate, once for the flag and once for the format string.
+	local text = self.db.units[frame.UnitType].health.text
+	if text.enable then
+		frame.Health.Text:SetText(E:GetFormattedText(text.format, health, maxHealth))
 	end
 end
 

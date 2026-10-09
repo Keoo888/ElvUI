@@ -71,14 +71,18 @@ A.EnchanData = weaponEnchantTime
 function A:UpdateTime(elapsed)
 	self.timeLeft = self.timeLeft - elapsed
 
-	self.statusBar:SetValue(self.timeLeft)
+	--! audit perf: barShow is off by default, so this ran a C SetValue per aura button per
+	--! frame into a bar nobody can see. statusBarShown is kept where the bar is shown/hidden.
+	if self.statusBarShown then
+		self.statusBar:SetValue(self.timeLeft)
+	end
 
 	if self.nextUpdate > 0 then
 		self.nextUpdate = self.nextUpdate - elapsed
 		return
 	end
 
-	if self.statusBar:IsShown() and A.db.barColorGradient then
+	if self.statusBarShown and A.db.barColorGradient then
 		self.statusBar:SetStatusBarColor(E.oUF:ColorGradient(self.timeLeft, self.duration or 0, .8, 0, 0, .8, .8, 0, 0, .8, 0))
 	end
 
@@ -251,7 +255,6 @@ end
 
 local buttons = {}
 function A:ConfigureAuras(header, auraTable, weaponPosition)
-	local headerName = header:GetName()
 	local db = self.db.debuffs
 	if header.filter == "HELPFUL" then
 		db = self.db.buffs
@@ -280,14 +283,24 @@ function A:ConfigureAuras(header, auraTable, weaponPosition)
 	end
 
 	wipe(buttons)
+
+	--! audit perf: the button was found by building its global name and reading _G, once per
+	--! aura per UNIT_AURA. The header creates these buttons itself, so it keeps them.
+	local cache = header.auraButtons
+	if not cache then
+		cache = {}
+		header.auraButtons = cache
+	end
+
 	local button
 	for i = 1, #auraTable do
-		button = _G[headerName.."AuraButton"..i]
+		button = cache[i]
 		if button then
 			if button:IsShown() then button:Hide() end
 		else
 			button = CreateFrame("Button", "$parentAuraButton"..i, header)
 			self:CreateIcon(button)
+			cache[i] = button
 		end
 		local buffInfo = auraTable[i]
 		button:SetID(buffInfo.index)
@@ -306,12 +319,14 @@ function A:ConfigureAuras(header, auraTable, weaponPosition)
 
 		if (self.db.barShow and buffInfo.duration > 0) or (self.db.barShow and self.db.barNoDuration and buffInfo.duration == 0) then
 			button.statusBar:Show()
+			button.statusBarShown = true
 
 			if not button.timeLeft or not self.db.barColorGradient then
 				button.statusBar:SetStatusBarColor(self.db.barColor.r, self.db.barColor.g, self.db.barColor.b)
 			end
 		else
 			button.statusBar:Hide()
+			button.statusBarShown = nil
 		end
 
 		if self.db.showDuration then
@@ -370,12 +385,14 @@ function A:ConfigureAuras(header, auraTable, weaponPosition)
 
 					if (self.db.barShow and duration > 0) or (self.db.barShow and self.db.barNoDuration and duration == 0) then
 						button.statusBar:Show()
+						button.statusBarShown = true
 
 						if not button.timeLeft or not self.db.barColorGradient then
 							button.statusBar:SetStatusBarColor(self.db.barColor.r, self.db.barColor.g, self.db.barColor.b)
 						end
 					else
 						button.statusBar:Hide()
+						button.statusBarShown = nil
 					end
 
 					if self.db.showDuration then
@@ -409,17 +426,59 @@ function A:ConfigureAuras(header, auraTable, weaponPosition)
 	local isOnLeft = pos == "LEFT" and true or false
 	local isOnRight = pos == "RIGHT" and true or false
 
-	local left, right, top, bottom = huge, -huge, -huge, huge
+	--! audit perf: the layout below is a function of config and index only, yet it was re-applied
+	--! to every button on every UNIT_AURA (~20 C calls each). Config is compared once here; a
+	--! button is re-laid only when the generation or its own index moved.
+	local gen = header.layoutGen
+	if not gen
+	or header.cfgPoint ~= point or header.cfgSize ~= size
+	or header.cfgX ~= xOffset or header.cfgY ~= yOffset
+	or header.cfgWrapX ~= wrapXOffset or header.cfgWrapY ~= wrapYOffset
+	or header.cfgWrapAfter ~= wrapAfter
+	or header.cfgFont ~= self.db.font or header.cfgOutline ~= self.db.fontOutline
+	or header.cfgDurationSize ~= db.durationFontSize or header.cfgCountSize ~= db.countFontSize
+	or header.cfgTimeX ~= self.db.timeXOffset or header.cfgTimeY ~= self.db.timeYOffset
+	or header.cfgCountX ~= self.db.countXOffset or header.cfgCountY ~= self.db.countYOffset
+	or header.cfgBarPos ~= pos or header.cfgBarSpacing ~= spacing
+	or header.cfgBarWidth ~= self.db.barWidth or header.cfgBarHeight ~= self.db.barHeight
+	or header.cfgBarTexture ~= self.db.barTexture
+	or header.cfgIconSize ~= iconSize or header.cfgPixel ~= E.PixelMode then
+		gen = (gen or 0) + 1
+		header.layoutGen = gen
+		header.cfgPoint, header.cfgSize = point, size
+		header.cfgX, header.cfgY = xOffset, yOffset
+		header.cfgWrapX, header.cfgWrapY = wrapXOffset, wrapYOffset
+		header.cfgWrapAfter = wrapAfter
+		header.cfgFont, header.cfgOutline = self.db.font, self.db.fontOutline
+		header.cfgDurationSize, header.cfgCountSize = db.durationFontSize, db.countFontSize
+		header.cfgTimeX, header.cfgTimeY = self.db.timeXOffset, self.db.timeYOffset
+		header.cfgCountX, header.cfgCountY = self.db.countXOffset, self.db.countYOffset
+		header.cfgBarPos, header.cfgBarSpacing = pos, spacing
+		header.cfgBarWidth, header.cfgBarHeight = self.db.barWidth, self.db.barHeight
+		header.cfgBarTexture = self.db.barTexture
+		header.cfgIconSize, header.cfgPixel = iconSize, E.PixelMode
+	end
+
+	local dirty = header.lastDisplay ~= display
+	local font, barTexture, orientation
 	for index = 1, display do
 		button = buttons[index]
-		local tick, cycle = floor((index - 1) % wrapAfter), floor((index - 1) / wrapAfter)
-		button:ClearAllPoints()
-		button:SetPoint(point, header, cycle * wrapXOffset + tick * xOffset, cycle * wrapYOffset + tick * yOffset)
+		if button.laidGen ~= gen or button.laidIndex ~= index then
+			button.laidGen, button.laidIndex = gen, index
+			dirty = true
 
-		button:SetSize(size, size)
+			local tick, cycle = floor((index - 1) % wrapAfter), floor((index - 1) / wrapAfter)
+			button:ClearAllPoints()
+			button:SetPoint(point, header, cycle * wrapXOffset + tick * xOffset, cycle * wrapYOffset + tick * yOffset)
 
-		if button.text then
-			local font = LSM:Fetch("font", self.db.font)
+			button:SetSize(size, size)
+
+			if not font then
+				font = LSM:Fetch("font", self.db.font)
+				barTexture = LSM:Fetch("statusbar", self.db.barTexture)
+				orientation = (isOnLeft or isOnRight) and "VERTICAL" or "HORIZONTAL"
+			end
+
 			button.text:ClearAllPoints()
 			button.text:Point("TOP", button, "BOTTOM", 1 + self.db.timeXOffset, 0 + self.db.timeYOffset)
 			button.text:FontTemplate(font, db.durationFontSize, self.db.fontOutline)
@@ -427,39 +486,42 @@ function A:ConfigureAuras(header, auraTable, weaponPosition)
 			button.count:ClearAllPoints()
 			button.count:Point("BOTTOMRIGHT", -1 + self.db.countXOffset, 0 + self.db.countYOffset)
 			button.count:FontTemplate(font, db.countFontSize, self.db.fontOutline)
-		end
 
-		button.statusBar:Width((isOnTop or isOnBottom) and iconSize or (self.db.barWidth + (E.PixelMode and 0 or 2)))
-		button.statusBar:Height((isOnLeft or isOnRight) and iconSize or (self.db.barHeight + (E.PixelMode and 0 or 2)))
-		button.statusBar:ClearAllPoints()
-		button.statusBar:Point(E.InversePoints[pos], button, pos, (isOnTop or isOnBottom) and 0 or ((isOnLeft and -((E.PixelMode and 1 or 3) + spacing)) or ((E.PixelMode and 1 or 3) + spacing)), (isOnLeft or isOnRight) and 0 or ((isOnTop and ((E.PixelMode and 1 or 3) + spacing) or -((E.PixelMode and 1 or 3) + spacing))))
-		button.statusBar:SetStatusBarTexture(LSM:Fetch("statusbar", self.db.barTexture))
-		if isOnLeft or isOnRight then
-			button.statusBar:SetOrientation("VERTICAL")
-		else
-			button.statusBar:SetOrientation("HORIZONTAL")
+			button.statusBar:Width((isOnTop or isOnBottom) and iconSize or (self.db.barWidth + (E.PixelMode and 0 or 2)))
+			button.statusBar:Height((isOnLeft or isOnRight) and iconSize or (self.db.barHeight + (E.PixelMode and 0 or 2)))
+			button.statusBar:ClearAllPoints()
+			button.statusBar:Point(E.InversePoints[pos], button, pos, (isOnTop or isOnBottom) and 0 or ((isOnLeft and -((E.PixelMode and 1 or 3) + spacing)) or ((E.PixelMode and 1 or 3) + spacing)), (isOnLeft or isOnRight) and 0 or ((isOnTop and ((E.PixelMode and 1 or 3) + spacing) or -((E.PixelMode and 1 or 3) + spacing))))
+			button.statusBar:SetStatusBarTexture(barTexture)
+			button.statusBar:SetOrientation(orientation)
 		end
 
 		button:Show()
-		left = min(left, button:GetLeft() or huge)
-		right = max(right, button:GetRight() or -huge)
-		top = max(top, button:GetTop() or -huge)
-		bottom = min(bottom, button:GetBottom() or huge)
 	end
-	local deadIndex = #(auraTable) + 1
-	button = _G[headerName.."AuraButton"..deadIndex]
-	while button do
+	header.lastDisplay = display
+
+	--! audit perf: the dead tail was swept by concatenating global names until one came back nil.
+	for i = #auraTable + 1, #cache do
+		button = cache[i]
 		if button:IsShown() then button:Hide() end
-		deadIndex = deadIndex + 1
-		button = _G[headerName.."AuraButton"..deadIndex]
 	end
 
-	if display >= 1 then
-		header:SetWidth(max(right - left, minWidth))
-		header:SetHeight(max(top - bottom, minHeight))
-	else
-		header:SetWidth(minWidth)
-		header:SetHeight(minHeight)
+	if dirty then
+		local left, right, top, bottom = huge, -huge, -huge, huge
+		for index = 1, display do
+			button = buttons[index]
+			left = min(left, button:GetLeft() or huge)
+			right = max(right, button:GetRight() or -huge)
+			top = max(top, button:GetTop() or -huge)
+			bottom = min(bottom, button:GetBottom() or huge)
+		end
+
+		if display >= 1 then
+			header:SetWidth(max(right - left, minWidth))
+			header:SetHeight(max(top - bottom, minHeight))
+		else
+			header:SetWidth(minWidth)
+			header:SetHeight(minHeight)
+		end
 	end
 end
 

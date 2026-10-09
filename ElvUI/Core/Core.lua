@@ -412,6 +412,11 @@ function E:UpdateBorderColors()
 			if not frame.ignoreBorderColors then
 				if frame.template == "Default" or frame.template == "Transparent" or frame.template == nil then
 					frame:SetBackdropBorderColor(unpack(self.media.unitframeBorderColor))
+
+					--! audit perf: aura buttons are unit frame elements too, and UF:PostUpdateAura now
+					--! skips an unchanged border colour -- drop its record or the debuff-type colour
+					--! never comes back after this sweep repaints the border.
+					frame.borderR = nil
 				end
 			end
 		else

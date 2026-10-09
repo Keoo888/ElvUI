@@ -48,10 +48,11 @@ function B:Initialize()
 		MINUTE_ONELETTER_ABBR = "%d m"
 	end
 
-	CreateFrame("Frame"):SetScript("OnUpdate", function()
-		if LFRBrowseFrame.timeToClear then
-			LFRBrowseFrame.timeToClear = nil
-		end
+	--! audit perf: this was an anonymous parentless frame, shown by default on 3.3.5a, whose OnUpdate
+	--! ran every rendered frame for the whole session just to keep one field nil. LFRParentFrame's
+	--! OnHide (LFRFrame.xml:1110) is the only place FrameXML ever sets it, so clear it there instead.
+	LFRParentFrame:HookScript("OnHide", function()
+		LFRBrowseFrame.timeToClear = nil
 	end)
 
 	MinimapPing:HookScript("OnUpdate", function(self)

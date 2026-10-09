@@ -107,15 +107,27 @@ local function ForceUpdate(element)
 	return Path(element.__owner, 'ForceUpdate', element.__owner.unit)
 end
 
+--! WotLK fix: 3.3.5a has no UNIT_CONNECTION. Offline state arrives with the roster
+--! events, which carry no unit, so feed the frame its own unit -- Update bails on
+--! `not unit`. No unitless flag needed: events.lua:74 treats any non-UNIT_ event so.
+local function RosterPath(self, event)
+	if(self.unit) then
+		return Path(self, event, self.unit)
+	end
+end
+
 local function Enable(self, unit)
 	local element = self.Portrait
 	if(element) then
 		element.__owner = self
 		element.ForceUpdate = ForceUpdate
 
-		self:RegisterEvent('UNIT_PORTRAIT_UPDATE', Path)
-		self:RegisterEvent('UNIT_MODEL_CHANGED', Path)
-		self:RegisterEvent('UNIT_CONNECTION', Path)
+		--! audit perf: unitless, because Path compares with UnitIsUnit and not with self.unit
+		--! -- the fired unit may be another id for the same person. See GAP-028.
+		self:RegisterEvent('UNIT_PORTRAIT_UPDATE', Path, true)
+		self:RegisterEvent('UNIT_MODEL_CHANGED', Path, true)
+		self:RegisterEvent('PARTY_MEMBERS_CHANGED', RosterPath)
+		self:RegisterEvent('RAID_ROSTER_UPDATE', RosterPath)
 
 		-- The quest log uses PARTY_MEMBER_{ENABLE,DISABLE} to handle updating of
 		-- party members overlapping quests. This will probably be enough to handle
@@ -141,7 +153,8 @@ local function Disable(self)
 		self:UnregisterEvent('UNIT_PORTRAIT_UPDATE', Path)
 		self:UnregisterEvent('UNIT_MODEL_CHANGED', Path)
 		self:UnregisterEvent('PARTY_MEMBER_ENABLE', Path)
-		self:UnregisterEvent('UNIT_CONNECTION', Path)
+		self:UnregisterEvent('PARTY_MEMBERS_CHANGED', RosterPath)
+		self:UnregisterEvent('RAID_ROSTER_UPDATE', RosterPath)
 	end
 end
 

@@ -43,6 +43,16 @@ function S:StatusBarColorGradient(bar, value, max, backdrop)
 end
 
 function S:HandleButton(button, strip, isDeclineButton, useCreateBackdrop, noSetTemplate)
+	--! WotLK 3.3.5a fix: callers reach these handlers through _G[name], and a fair
+	--! number of the frames the skin code names simply do not exist on 3.3.5a (they
+	--! belong to later expansions, or to an addon that has not built them yet). The
+	--! lookup then yields nil, and the very first line died with "attempt to index
+	--! local 'button' (a nil value)" — which aborts the whole enclosing skin
+	--! function, so every frame it had not reached yet stayed unskinned too. Bailing
+	--! out costs one unskinned frame instead. Note what this trades away: a genuine
+	--! "that frame is not on this client" mistake now passes silently, so a newly
+	--! added skin that never appears should be checked here first.
+	if not button then return end
 	if button.isSkinned then return end
 
 	local buttonName = button.GetName and button:GetName()
@@ -265,6 +275,9 @@ end
 
 local dropdownArrowColor = {1, 0.8, 0}
 function S:HandleDropDownBox(frame, width, direction)
+	--! WotLK 3.3.5a fix: same nil receiver as in S:HandleButton above — see the note
+	--! there for why the frame can be missing and what the guard hides.
+	if not frame then return end
 	if frame.backdrop then return end
 
 	local FrameName = frame.GetName and frame:GetName()
@@ -305,6 +318,9 @@ function S:HandleStatusBar(frame, color)
 end
 
 function S:HandleCheckBox(frame, noBackdrop, noReplaceTextures, forceSaturation)
+	--! WotLK 3.3.5a fix: same nil receiver as in S:HandleButton above — see the note
+	--! there for why the frame can be missing and what the guard hides.
+	if not frame then return end
 	if frame.isSkinned then return end
 
 	frame:StripTextures()

@@ -5,7 +5,7 @@ local LSM = E.Libs.LSM
 --Lua functions
 local unpack = unpack
 local ceil = math.ceil
-local find, format, split = string.find, string.format, string.split
+local find, format = string.find, string.format
 local sort = table.sort
 --WoW API / Variables
 local CreateFrame = CreateFrame
@@ -23,6 +23,7 @@ function UF:Construct_Buffs(frame)
 	buffs.PostCreateIcon = self.Construct_AuraIcon
 	buffs.PostUpdateIcon = self.PostUpdateAura
 	buffs.CustomFilter = self.AuraFilter
+	buffs.PreUpdate = self.AuraPreUpdate
 	buffs:SetFrameLevel(frame.RaisedElementParent:GetFrameLevel() + 10) --Make them appear above any text element
 	buffs.type = "buffs"
 	--Set initial width to prevent division by zero. This value doesn't matter, as it will be updated later
@@ -38,6 +39,7 @@ function UF:Construct_Debuffs(frame)
 	debuffs.PostCreateIcon = self.Construct_AuraIcon
 	debuffs.PostUpdateIcon = self.PostUpdateAura
 	debuffs.CustomFilter = self.AuraFilter
+	debuffs.PreUpdate = self.AuraPreUpdate
 	debuffs.type = "debuffs"
 	debuffs:SetFrameLevel(frame.RaisedElementParent:GetFrameLevel() + 10) --Make them appear above any text element
 	--Set initial width to prevent division by zero. This value doesn't matter, as it will be updated later
@@ -100,6 +102,11 @@ function UF:UpdateAuraSettings(auras, button)
 	end
 
 	button:Size((auras and auras.size) or 30)
+
+	--! audit perf: oUF's updateIcon now skips an unchanged size and mouse state; this and
+	--! auras.disableMouse are rewritten from the options, so drop both records here.
+	button.cachedSize = nil
+	button.cachedMouse = nil
 
 	button.needsUpdateCooldownPosition = true
 end
@@ -356,25 +363,45 @@ end
 local unstableAffliction = GetSpellInfo(30108)
 local vampiricTouch = GetSpellInfo(34914)
 function UF:PostUpdateAura(unit, button)
+	--! audit perf: the border colour and the desaturation follow the aura, not the pass -- every
+	--! input here (isDebuff, isFriend, isPlayer, dtype, name) is fixed while the aura holds its
+	--! slot, so collect the values and write only on a change. Cached by value, so editing a
+	--! DebuffTypeColor entry in place still repaints; E:UpdateBorderColors drops the record.
+	local r, g, b, a
+	local desaturate
+
 	if button.isDebuff then
 		if not button.isFriend and not button.isPlayer then --[[and (not E.isDebuffWhiteList[name])]]
-			button:SetBackdropBorderColor(0.9, 0.1, 0.1)
-			button.icon:SetDesaturated((unit and not find(unit, "arena%d")) and true or false)
+			r, g, b = 0.9, 0.1, 0.1
+			desaturate = (unit and not find(unit, "arena%d")) and true or false
 		else
 			local color = (button.dtype and DebuffTypeColor[button.dtype]) or DebuffTypeColor.none
 			if button.name and (button.name == unstableAffliction or button.name == vampiricTouch) and E.myclass ~= "WARLOCK" then
-				button:SetBackdropBorderColor(0.05, 0.85, 0.94)
+				r, g, b = 0.05, 0.85, 0.94
 			else
-				button:SetBackdropBorderColor(color.r * 0.6, color.g * 0.6, color.b * 0.6)
+				r, g, b = color.r * 0.6, color.g * 0.6, color.b * 0.6
 			end
-			button.icon:SetDesaturated(false)
+			desaturate = false
 		end
 	else
 		if button.isStealable and not button.isFriend then
-			button:SetBackdropBorderColor(0.93, 0.91, 0.55, 1.0)
+			r, g, b, a = 0.93, 0.91, 0.55, 1.0
 		else
-			button:SetBackdropBorderColor(unpack(E.media.unitframeBorderColor))
+			r, g, b, a = unpack(E.media.unitframeBorderColor)
 		end
+	end
+
+	if button.borderR ~= r or button.borderG ~= g or button.borderB ~= b or button.borderA ~= a then
+		button.borderR, button.borderG, button.borderB, button.borderA = r, g, b, a
+
+		button:SetBackdropBorderColor(r, g, b, a)
+	end
+
+	-- the buff branch never touched desaturation, so leave it alone there as before
+	if desaturate ~= nil and button.cachedDesaturate ~= desaturate then
+		button.cachedDesaturate = desaturate
+
+		button.icon:SetDesaturated(desaturate)
 	end
 
 	if button.needsUpdateCooldownPosition and (button.cd and button.cd.timer and button.cd.timer.text) then
@@ -382,15 +409,27 @@ function UF:PostUpdateAura(unit, button)
 	end
 end
 
+--! audit perf: isFriend is a per-UNIT answer that was bought with two C calls per AURA.
+--! oUF calls PreUpdate once per pass, right before the filter loop and with the same unit,
+--! so ask the client here and let AuraFilter read a field. Unit is stored as the cache key.
+function UF:AuraPreUpdate(unit)
+	self.filterUnit = unit
+	self.filterIsFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
+end
+
 function UF:AuraFilter(unit, button, name, _, _, _, debuffType, duration, expiration, caster, isStealable, _, spellID)
 	if not name then return end -- checking for an aura that is not there, pass nil to break while loop
 
-	local parent = self:GetParent()
+	--! audit perf: oUF keeps the owner frame in __owner, so GetParent() was a C call per aura.
+	local parent = self.__owner
 	local db = parent.db and parent.db[self.type]
 	if not db then return true end
 
 	local isPlayer = (caster == "player" or caster == "vehicle")
-	local isFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
+	local isFriend = self.filterIsFriend
+	if self.filterUnit ~= unit then -- PreUpdate has not run for this unit, ask directly
+		isFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
+	end
 
 	button.isPlayer = isPlayer
 	button.isFriend = isFriend
@@ -409,9 +448,13 @@ function UF:AuraFilter(unit, button, name, _, _, _, debuffType, duration, expira
 	local filterCheck, spellPriority
 
 	if db.priority ~= "" then
-		local isUnit = unit and caster and UnitIsUnit(unit, caster)
-		local canDispell = (self.type == "buffs" and isStealable) or (self.type == "debuffs" and debuffType and E:IsDispellableByMe(debuffType))
-		filterCheck, spellPriority = UF:CheckFilter(name, caster, spellID, isFriend, isPlayer, isUnit, allowDuration, noDuration, canDispell, split(",", db.priority))
+		local parsed = UF:GetFilterPriority(db.priority)
+		--! audit perf: isUnit costs a C call and canDispell a method call, but only six filter
+		--! names ever read them, and the default raid/party lists name none of the unit ones.
+		local isUnit, canDispell
+		if parsed.needsUnit then isUnit = unit and caster and UnitIsUnit(unit, caster) end
+		if parsed.needsDispel then canDispell = (self.type == "buffs" and isStealable) or (self.type == "debuffs" and debuffType and E:IsDispellableByMe(debuffType)) end
+		filterCheck, spellPriority = UF:CheckFilter(name, caster, spellID, isFriend, isPlayer, isUnit, allowDuration, noDuration, canDispell, parsed)
 		if spellPriority then button.priority = spellPriority end -- this is the only difference from auarbars code
 	else
 		filterCheck = allowDuration and true -- Allow all auras to be shown when the filter list is empty, while obeying duration sliders

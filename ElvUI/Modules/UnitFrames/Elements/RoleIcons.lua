@@ -12,7 +12,10 @@ function UF:Construct_RoleIcon(frame)
 	tex:Size(17)
 	tex:Point("BOTTOM", frame.Health, "BOTTOM", 0, 2)
 	tex.Override = UF.UpdateRoleIcon
-	frame:RegisterEvent("UNIT_CONNECTION", UF.UpdateRoleIcon)
+	--! WotLK fix: 3.3.5a has no UNIT_CONNECTION; offline state arrives with the roster
+	--! events. No shim here -- UpdateRoleIcon reads self.unit and ignores the fired unit.
+	frame:RegisterEvent("PARTY_MEMBERS_CHANGED", UF.UpdateRoleIcon)
+	frame:RegisterEvent("RAID_ROSTER_UPDATE", UF.UpdateRoleIcon)
 
 	return tex
 end

@@ -80,7 +80,10 @@ ElvUF.Tags.Methods["afk"] = function(unit)
 	end
 end
 
-ElvUF.Tags.Events["healthcolor"] = "UNIT_HEALTH UNIT_CONNECTION PLAYER_FLAGS_CHANGED"
+--! WotLK fix: 3.3.5a has no UNIT_CONNECTION, so every tag below listening for it was
+--! never refreshed on disconnect. The roster events replace it; oUF's tag dispatcher
+--! already knows both as unitless (oUF/elements/tags.lua, unitlessEvents).
+ElvUF.Tags.Events["healthcolor"] = "UNIT_HEALTH PARTY_MEMBERS_CHANGED RAID_ROSTER_UPDATE PLAYER_FLAGS_CHANGED"
 ElvUF.Tags.Methods["healthcolor"] = function(unit)
 	if UnitIsDeadOrGhost(unit) or not UnitIsConnected(unit) then
 		return Hex(0.84, 0.75, 0.65)
@@ -103,7 +106,7 @@ end
 
 for textFormat in pairs(E.GetFormattedTextStyles) do
 	local tagTextFormat = strlower(gsub(textFormat, "_", "-"))
-	ElvUF.Tags.Events[format("health:%s", tagTextFormat)] = "UNIT_HEALTH UNIT_MAXHEALTH UNIT_CONNECTION PLAYER_FLAGS_CHANGED"
+	ElvUF.Tags.Events[format("health:%s", tagTextFormat)] = "UNIT_HEALTH UNIT_MAXHEALTH PARTY_MEMBERS_CHANGED RAID_ROSTER_UPDATE PLAYER_FLAGS_CHANGED"
 	ElvUF.Tags.Methods[format("health:%s", tagTextFormat)] = function(unit)
 		local status = UnitIsDead(unit) and L["Dead"] or UnitIsGhost(unit) and L["Ghost"] or not UnitIsConnected(unit) and L["Offline"]
 		if status then
@@ -143,7 +146,7 @@ for textFormat in pairs(E.GetFormattedTextStyles) do
 end
 
 for textFormat, length in pairs({veryshort = 5, short = 10, medium = 15, long = 20}) do
-	ElvUF.Tags.Events[format("health:deficit-percent:name-%s", textFormat)] = "UNIT_HEALTH UNIT_MAXHEALTH UNIT_CONNECTION PLAYER_FLAGS_CHANGED"
+	ElvUF.Tags.Events[format("health:deficit-percent:name-%s", textFormat)] = "UNIT_HEALTH UNIT_MAXHEALTH PARTY_MEMBERS_CHANGED RAID_ROSTER_UPDATE PLAYER_FLAGS_CHANGED"
 	ElvUF.Tags.Methods[format("health:deficit-percent:name-%s", textFormat)] = function(unit)
 		local cur, max = UnitHealth(unit), UnitHealthMax(unit)
 		local deficit = max - cur
@@ -172,7 +175,7 @@ for textFormat, length in pairs({veryshort = 5, short = 10, medium = 15, long = 
 		return name ~= nil and E:ShortenString(name, length) or nil
 	end
 
-	ElvUF.Tags.Events[format("name:%s:status", textFormat)] = "UNIT_NAME_UPDATE UNIT_CONNECTION PLAYER_FLAGS_CHANGED UNIT_HEALTH"
+	ElvUF.Tags.Events[format("name:%s:status", textFormat)] = "UNIT_NAME_UPDATE PARTY_MEMBERS_CHANGED RAID_ROSTER_UPDATE PLAYER_FLAGS_CHANGED UNIT_HEALTH"
 	ElvUF.Tags.Methods[format("name:%s:status", textFormat)] = function(unit)
 		local status = UnitIsDead(unit) and L["Dead"] or UnitIsGhost(unit) and L["Ghost"] or not UnitIsConnected(unit) and L["Offline"]
 		local name = UnitName(unit)

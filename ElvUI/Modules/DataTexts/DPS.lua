@@ -47,22 +47,25 @@ local function OnEvent(self, event, ...)
 		if not events[select(2, ...)] then return end
 
 		local id = select(3, ...)
-		if id == playerID or id == petID then
-			if timeStamp == 0 then
-				timeStamp = ...
-			end
+		--! audit perf: a damage row from anyone else touches neither dmgTotal nor combatTime, so the
+		--! text GetDPS would redraw is byte-identical -- yet it fell through to SetFormattedText on
+		--! every such row. In a raid that is most of the log. Ours still repaint.
+		if id ~= playerID and id ~= petID then return end
 
-			lastSegment = timeStamp
-			combatTime = (...) - timeStamp
-
-			if select(2, ...) == "SWING_DAMAGE" then
-				lastDmgAmount = select(9, ...)
-			else
-				lastDmgAmount = select(12, ...)
-			end
-
-			dmgTotal = dmgTotal + lastDmgAmount
+		if timeStamp == 0 then
+			timeStamp = ...
 		end
+
+		lastSegment = timeStamp
+		combatTime = (...) - timeStamp
+
+		if select(2, ...) == "SWING_DAMAGE" then
+			lastDmgAmount = select(9, ...)
+		else
+			lastDmgAmount = select(12, ...)
+		end
+
+		dmgTotal = dmgTotal + lastDmgAmount
 	elseif event == "UNIT_PET" then
 		petID = UnitGUID("pet")
 	elseif event == "PLAYER_ENTERING_WORLD" then

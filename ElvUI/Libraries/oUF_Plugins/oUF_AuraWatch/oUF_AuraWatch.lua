@@ -116,6 +116,10 @@ assert(oUF, "oUF_AuraWatch was unable to locate oUF install")
 
 local next = next
 local pairs = pairs
+--! audit perf: formatTime reached all three of these as globals, ten times a second per icon
+--! with a duration text.
+local format = string.format
+local ceil, floor = math.ceil, math.floor
 
 local CreateFrame = CreateFrame
 local GetSpellInfo = GetSpellInfo
@@ -156,6 +160,7 @@ do
 			t = {}
 		end
 		GUIDs[guid] = t
+		return t
 	end
 end
 
@@ -195,6 +200,10 @@ local function updateText(self, elapsed)
 			else
 				self.text:SetText("")
 				self:SetScript("OnUpdate", nil)
+
+				--! audit perf: resetIcon skips reinstalling the handler while it is still on, so
+				--! clear the flag here or the countdown never comes back.
+				self.textScriptOn = nil
 			end
 
 			self.elapsed = 0
@@ -206,11 +215,21 @@ local function resetIcon(icon, frame, count, duration, remaining)
 	if icon.onlyShowMissing then
 		icon:Hide()
 	else
+		--! audit perf: remaining is an absolute expiration time, so start and duration are
+		--! bit-identical on every pass until the buff is refreshed. Same for the stack text and
+		--! the alpha, and this runs per matched aura per UNIT_AURA.
 		if icon.cd then
 			if duration and duration > 0 and icon.style ~= "NONE" then
-				icon.cd:SetCooldown(remaining - duration, duration)
-				icon.cd:Show()
-			else
+				local start = remaining - duration
+				if icon.cachedStart ~= start or icon.cachedDuration ~= duration then
+					icon.cachedStart, icon.cachedDuration = start, duration
+
+					icon.cd:SetCooldown(start, duration)
+					icon.cd:Show()
+				end
+			elseif icon.cachedStart ~= false then
+				icon.cachedStart, icon.cachedDuration = false, false
+
 				icon.cd:Hide()
 			end
 		end
@@ -219,18 +238,34 @@ local function resetIcon(icon, frame, count, duration, remaining)
 			icon.timeLeft = remaining
 			icon.first = true
 			icon.elapsed = 0
-			icon:SetScript("OnUpdate", updateText)
+
+			-- updateText uninstalls itself when the timer runs out, so track that instead
+			if not icon.textScriptOn then
+				icon.textScriptOn = true
+
+				icon:SetScript("OnUpdate", updateText)
+			end
 		end
 
 		if icon.count then
-			icon.count:SetText(count > 1 and count)
+			local text = count > 1 and count
+			if icon.cachedCount ~= text then
+				icon.cachedCount = text
+
+				icon.count:SetText(text)
+			end
 		end
 
 		if icon.overlay then
 			icon.overlay:Hide()
 		end
 
-		icon:SetAlpha(icon.presentAlpha)
+		if icon.cachedAlpha ~= icon.presentAlpha then
+			icon.cachedAlpha = icon.presentAlpha
+
+			icon:SetAlpha(icon.presentAlpha)
+		end
+
 		icon:Show()
 	end
 end
@@ -239,11 +274,17 @@ local function expireIcon(icon, frame)
 	if icon.onlyShowPresent then
 		icon:Hide()
 	else
-		if icon.cd then
+		--! audit perf: clearing goes through the same records resetIcon keeps, or it would skip
+		--! restoring what is wiped here.
+		if icon.cd and icon.cachedStart ~= false then
+			icon.cachedStart, icon.cachedDuration = false, false
+
 			icon.cd:Hide()
 		end
 
-		if icon.count then
+		if icon.count and icon.cachedCount ~= nil then
+			icon.cachedCount = nil
+
 			icon.count:SetText()
 		end
 
@@ -251,7 +292,12 @@ local function expireIcon(icon, frame)
 			icon.overlay:Show()
 		end
 
-		icon:SetAlpha(icon.missingAlpha)
+		if icon.cachedAlpha ~= icon.missingAlpha then
+			icon.cachedAlpha = icon.missingAlpha
+
+			icon:SetAlpha(icon.missingAlpha)
+		end
+
 		icon:Show()
 	end
 end
@@ -260,27 +306,28 @@ local found = {}
 local function Update(self, event, unit)
 	if not unit or self.unit ~= unit then return end
 
-	local guid = UnitGUID(unit)
-	if not guid then return end
-
-	if not GUIDs[guid] then
-		setupGUID(guid)
-	end
-
 	local element = self.AuraWatch
 	local icons = element.watched
 
-	for _, icon in pairs(icons) do
-		if not icon.onlyShowMissing then
-			icon:Hide()
-		else
-			icon:Show()
-		end
+	--! audit perf: with nothing watched the pass still walked every buff and every debuff of the
+	--! unit on each UNIT_AURA. Nothing below it can match, so leave before the first C call.
+	if not next(icons) then return end
+
+	local guid = UnitGUID(unit)
+	if not guid then return end
+
+	local guidTable = GUIDs[guid]
+	if not guidTable then
+		guidTable = setupGUID(guid)
 	end
+
+	--! audit perf: both were read once per aura inside the scan.
+	local strict = element.strictMatching
+	local byName = element.watchedByName
 
 	local filter, index = "HELPFUL", 1
 	local _, name, texture, count, duration, remaining, caster, spellID
-	local key, icon
+	local byTexture, icon
 
 	while true do
 		name, _, texture, count, _, duration, remaining, caster, _, _, spellID = UnitAura(unit, index, filter)
@@ -293,27 +340,37 @@ local function Update(self, event, unit)
 				break
 			end
 		else
-			if element.strictMatching then
-				key = spellID
+			if strict then
+				icon = icons[spellID]
 			else
-				key = name..texture
+				--! audit perf: the key was name..texture, so every aura walked cost a freshly
+				--! built and interned string. The same pair is two hash reads off watchedByName.
+				byTexture = byName[name]
+				icon = byTexture and byTexture[texture]
 			end
-
-			icon = icons[key]
 
 			if icon and (icon.anyUnit or (caster and icon.fromUnits and icon.fromUnits[caster])) then
 				resetIcon(icon, element, count, duration, remaining)
-				GUIDs[guid][key] = true
-				found[key] = true
+				guidTable[icon] = true
+				found[icon] = true
 			end
 
 			index = index + 1
 		end
 	end
 
-	for icon in pairs(GUIDs[guid]) do
-		if icons[icon] and not found[icon] then
-			expireIcon(icons[icon], element)
+	--! audit perf: the pass used to open by hiding or showing every watched icon and then show
+	--! again whatever the scan found, so a buff that stayed up paid two visibility calls per
+	--! event. Only icons the scan did not touch need a default, and that is known here.
+	for _, watchedIcon in pairs(icons) do
+		if not found[watchedIcon] then
+			if guidTable[watchedIcon] then
+				expireIcon(watchedIcon, element)
+			elseif watchedIcon.onlyShowMissing then
+				watchedIcon:Show()
+			else
+				watchedIcon:Hide()
+			end
 		end
 	end
 
@@ -327,6 +384,9 @@ local function setupIcons(self)
 	local icons = element.icons
 
 	element.watched = {}
+	--! audit perf: second index over the same icons, so the scan can ask (name, texture) without
+	--! building a key string. Rebuilt here with watched, never written anywhere else.
+	element.watchedByName = {}
 
 	for _, icon in pairs(icons) do
 		local name, _, image = GetSpellInfo(icon.spellID)
@@ -386,6 +446,13 @@ local function setupIcons(self)
 				element.watched[icon.spellID] = icon
 			else
 				element.watched[name..image] = icon
+
+				local byTexture = element.watchedByName[name]
+				if not byTexture then
+					byTexture = {}
+					element.watchedByName[name] = byTexture
+				end
+				byTexture[image] = icon
 			end
 
 			if element.PostCreateIcon then

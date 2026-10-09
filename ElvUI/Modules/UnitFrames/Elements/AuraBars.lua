@@ -182,15 +182,54 @@ function UF.SortAuraBarName(a, b)
 	return a.name > b.name
 end
 
-function UF:CheckFilter(name, caster, spellID, isFriend, isPlayer, isUnit, allowDuration, noDuration, canDispell, ...)
-	for i = 1, select("#", ...) do
-		local filterName = select(i, ...)
-		local friendCheck = (isFriend and strmatch(filterName, "^Friendly:([^,]*)")) or (not isFriend and strmatch(filterName, "^Enemy:([^,]*)")) or nil
+--! audit perf: db.priority is a configuration string that does not change between aura
+--! updates, yet it was re-split and re-matched for EVERY aura of EVERY unit on EVERY
+--! UNIT_AURA. Parsed once per distinct string; editing the setting just makes a new entry.
+--! audit perf: only these six filter names ever read isUnit or canDispell, so the parse
+--! records whether the list mentions any. Friendly:/Enemy: captures count too.
+local unitFilters = { CastByUnit = true, notCastByUnit = true }
+local dispelFilters = { Dispellable = true, notDispellable = true, blockDispellable = true, blockNotDispellable = true }
+
+local priorityCache = {}
+function UF:GetFilterPriority(priority)
+	local parsed = priorityCache[priority]
+	if not parsed then
+		parsed = { n = 0, name = {}, friendly = {}, enemy = {} }
+		local tokens = { strsplit(",", priority) }
+		for i = 1, #tokens do
+			local token = tokens[i]
+			local friendly = strmatch(token, "^Friendly:([^,]*)")
+			local enemy = strmatch(token, "^Enemy:([^,]*)")
+			parsed.n = i
+			parsed.name[i] = token
+			parsed.friendly[i] = friendly
+			parsed.enemy[i] = enemy
+
+			if unitFilters[token] or unitFilters[friendly] or unitFilters[enemy] then parsed.needsUnit = true end
+			if dispelFilters[token] or dispelFilters[friendly] or dispelFilters[enemy] then parsed.needsDispel = true end
+		end
+		priorityCache[priority] = parsed
+	end
+
+	return parsed
+end
+
+function UF:CheckFilter(name, caster, spellID, isFriend, isPlayer, isUnit, allowDuration, noDuration, canDispell, parsed)
+	--! audit perf: the filter tables and the three parsed columns are loop-invariant, yet the
+	--! four-deep reach into E.global.unitframe.aurafilters was walked for every entry of every
+	--! aura of every unit. Reach once before the loop; the reads inside are then flat.
+	local specialFilters = G.unitframe.specialFilters
+	local auraFilters = E.global.unitframe.aurafilters
+	local names, friendly, enemy = parsed.name, parsed.friendly, parsed.enemy
+
+	for i = 1, parsed.n do
+		local filterName = names[i]
+		local friendCheck = (isFriend and friendly[i]) or (not isFriend and enemy[i]) or nil
 		if friendCheck ~= false then
-			if friendCheck ~= nil and (G.unitframe.specialFilters[friendCheck] or E.global.unitframe.aurafilters[friendCheck]) then
+			if friendCheck ~= nil and (specialFilters[friendCheck] or auraFilters[friendCheck]) then
 				filterName = friendCheck -- this is for our filters to handle Friendly and Enemy
 			end
-			local filter = E.global.unitframe.aurafilters[filterName]
+			local filter = auraFilters[filterName]
 			if filter then
 				local filterType = filter.type
 				local spellList = filter.spells
@@ -234,13 +273,15 @@ function UF:AuraBarFilter(unit, name, _, _, _, debuffType, duration, _, unitCast
 	local filterCheck, isUnit, isFriend, isPlayer, canDispell, allowDuration, noDuration
 
 	if db.priority ~= "" then
+		local parsed = UF:GetFilterPriority(db.priority)
 		noDuration = (not duration or duration == 0)
 		isFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
 		isPlayer = (unitCaster == "player" or unitCaster == "vehicle")
-		isUnit = unit and unitCaster and UnitIsUnit(unit, unitCaster)
-		canDispell = (self.type == "Buffs" and isStealable) or (self.type == "Debuffs" and debuffType and E:IsDispellableByMe(debuffType))
+		--! audit perf: a C call and a method call that no filter in this list would read.
+		if parsed.needsUnit then isUnit = unit and unitCaster and UnitIsUnit(unit, unitCaster) end
+		if parsed.needsDispel then canDispell = (self.type == "Buffs" and isStealable) or (self.type == "Debuffs" and debuffType and E:IsDispellableByMe(debuffType)) end
 		allowDuration = noDuration or (duration and (duration > 0) and (db.maxDuration == 0 or duration <= db.maxDuration) and (db.minDuration == 0 or duration >= db.minDuration))
-		filterCheck = UF:CheckFilter(name, unitCaster, spellID, isFriend, isPlayer, isUnit, allowDuration, noDuration, canDispell, strsplit(",", db.priority))
+		filterCheck = UF:CheckFilter(name, unitCaster, spellID, isFriend, isPlayer, isUnit, allowDuration, noDuration, canDispell, parsed)
 	else
 		filterCheck = true -- Allow all auras to be shown when the filter list is empty
 	end

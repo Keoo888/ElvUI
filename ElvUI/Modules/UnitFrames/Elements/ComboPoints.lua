@@ -57,8 +57,10 @@ function UF:Construct_Combobar(frame)
 		ComboPoints[i].bg:SetParent(ComboPoints[i].backdrop)
 	end
 
-	frame:RegisterEvent("UNIT_ENTERED_VEHICLE", UF.UpdateComboDisplay)
-	frame:RegisterEvent("UNIT_EXITING_VEHICLE", UF.UpdateComboDisplay)
+	--! audit perf: unitless, because UpdateComboDisplay tests the literal player, not self.unit
+	--! -- in a vehicle self.unit is vehicle while the event still fires for player. See GAP-028.
+	frame:RegisterEvent("UNIT_ENTERED_VEHICLE", UF.UpdateComboDisplay, true)
+	frame:RegisterEvent("UNIT_EXITING_VEHICLE", UF.UpdateComboDisplay, true)
 
 	if E.myclass == "DRUID" then
 		frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM", UF.UpdateComboDisplay)

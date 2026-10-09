@@ -85,6 +85,25 @@ local _, ns = ...
 local oUF = ns.oUF
 local Private = oUF.Private
 
+--! audit perf: every name below was resolved through _G on each call, and Update/UpdateColor run
+--! per frame per UNIT_HEALTH while onHealthUpdate runs every rendered frame on four units. The
+--! twin element power.lua already caches its API this way; this file was the only one that did not.
+local unpack = unpack
+
+local GetPetHappiness = GetPetHappiness
+local UnitClass = UnitClass
+local UnitHealth = UnitHealth
+local UnitHealthMax = UnitHealthMax
+local UnitIsConnected = UnitIsConnected
+local UnitIsPlayer = UnitIsPlayer
+local UnitIsTapped = UnitIsTapped
+local UnitIsTappedByAllThreatList = UnitIsTappedByAllThreatList
+local UnitIsTappedByPlayer = UnitIsTappedByPlayer
+local UnitIsUnit = UnitIsUnit
+local UnitPlayerControlled = UnitPlayerControlled
+local UnitReaction = UnitReaction
+local UnitThreatSituation = UnitThreatSituation
+
 local function UpdateColor(self, event, unit)
 	if(not unit or self.unit ~= unit) then return end
 	local element = self.Health
@@ -115,13 +134,23 @@ local function UpdateColor(self, event, unit)
 		r, g, b = t[1], t[2], t[3]
 	end
 
+	--! audit perf: class, reaction and flat health colouring give one constant colour per unit, so
+	--! this repainted the identical colour on every tick -- and ElvUI hooks SetStatusBarColor to
+	--! recolour the backdrop, making each repaint three C calls plus a Lua frame. The sibling
+	--! nameplate module guards the same write with frame.Health.r/g/b; mu joins the key because
+	--! PostUpdateHealthColor rewrites bg.multiplier from the options.
 	if(b) then
-		element:SetStatusBarColor(r, g, b)
-
 		local bg = element.bg
-		if(bg) then
-			local mu = bg.multiplier or 1
-			bg:SetVertexColor(r * mu, g * mu, b * mu)
+		local mu = bg and (bg.multiplier or 1)
+
+		if(element.colorR ~= r or element.colorG ~= g or element.colorB ~= b or element.colorMu ~= mu) then
+			element.colorR, element.colorG, element.colorB, element.colorMu = r, g, b, mu
+
+			element:SetStatusBarColor(r, g, b)
+
+			if(bg) then
+				bg:SetVertexColor(r * mu, g * mu, b * mu)
+			end
 		end
 	end
 
@@ -158,7 +187,11 @@ local function Update(self, event, unit)
 	local cur, max = UnitHealth(unit), UnitHealthMax(unit)
 	local disconnected = not UnitIsConnected(unit)
 
-	element:SetMinMaxValues(0, max)
+	--! audit perf: max health changes on buffs and level-ups, not on every tick, and element.max
+	--! is the only record of what was last sent -- nothing else writes this bar's range.
+	if(element.max ~= max) then
+		element:SetMinMaxValues(0, max)
+	end
 
 	if(disconnected) then
 		element:SetValue(max)
@@ -204,6 +237,15 @@ local function ForceUpdate(element)
 	Path(element.__owner, 'ForceUpdate', element.__owner.unit)
 end
 
+--! WotLK fix: 3.3.5a has no UNIT_CONNECTION. Offline state arrives with the roster
+--! events, which carry no unit, so feed the frame its own unit. Path and not ColorPath:
+--! element.disconnected is written by Update, and colour alone would stay stale.
+local function RosterPath(self, event)
+	if(self.unit) then
+		return Path(self, event, self.unit)
+	end
+end
+
 --[[ Health:SetColorDisconnected(state)
 Used to toggle coloring if the unit is offline.
 
@@ -214,9 +256,11 @@ local function SetColorDisconnected(element, state)
 	if(element.colorDisconnected ~= state) then
 		element.colorDisconnected = state
 		if(element.colorDisconnected) then
-			element.__owner:RegisterEvent('UNIT_CONNECTION', ColorPath)
+			element.__owner:RegisterEvent('PARTY_MEMBERS_CHANGED', RosterPath)
+			element.__owner:RegisterEvent('RAID_ROSTER_UPDATE', RosterPath)
 		else
-			element.__owner:UnregisterEvent('UNIT_CONNECTION', ColorPath)
+			element.__owner:UnregisterEvent('PARTY_MEMBERS_CHANGED', RosterPath)
+			element.__owner:UnregisterEvent('RAID_ROSTER_UPDATE', RosterPath)
 		end
 	end
 end
@@ -322,7 +366,8 @@ local function Enable(self, unit)
 		element.SetFrequentUpdates = SetFrequentUpdates
 
 		if(element.colorDisconnected) then
-			self:RegisterEvent('UNIT_CONNECTION', ColorPath)
+			self:RegisterEvent('PARTY_MEMBERS_CHANGED', RosterPath)
+			self:RegisterEvent('RAID_ROSTER_UPDATE', RosterPath)
 		end
 
 		if(element.colorHappiness) then
@@ -371,7 +416,8 @@ local function Disable(self)
 
 		self:UnregisterEvent('UNIT_HEALTH', Path)
 		self:UnregisterEvent('UNIT_MAXHEALTH', Path)
-		self:UnregisterEvent('UNIT_CONNECTION', ColorPath)
+		self:UnregisterEvent('PARTY_MEMBERS_CHANGED', RosterPath)
+		self:UnregisterEvent('RAID_ROSTER_UPDATE', RosterPath)
 		self:UnregisterEvent('UNIT_FACTION', ColorPath)
 		self:UnregisterEvent('UNIT_HAPPINESS', ColorPath)
 		self:UnregisterEvent('UNIT_THREAT_LIST_UPDATE', ColorPath)

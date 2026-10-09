@@ -905,7 +905,14 @@ function E:StaticPopup_Show(which, text_arg1, text_arg2, data)
 
 		if info.maxLetters then
 			editBox:SetMaxLetters(info.maxLetters)
-			editBox:SetCountInvisibleLetters(info.countInvisibleLetters)
+			--! WotLK fix: EditBox:SetCountInvisibleLetters does not exist on 3.3.5a
+			--! (retail-only), and the call took down every popup that has both an edit
+			--! box and a letter limit. In this tree that is exactly the two profile
+			--! dialogs — DISTRIBUTOR_CONFIRM and IMPORT_PROFILE_EXISTS — so a profile
+			--! received from another player or imported from a string could not be
+			--! renamed or accepted at all once its name was already taken. Removing the
+			--! call loses nothing: no popup in the tree sets countInvisibleLetters, so
+			--! the argument was always nil and the call did nothing even on retail.
 		end
 		if info.maxBytes then
 			editBox:SetMaxBytes(info.maxBytes)

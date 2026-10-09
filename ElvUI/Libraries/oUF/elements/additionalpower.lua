@@ -168,8 +168,10 @@ end
 local function ElementEnable(self)
 	local element = self.AdditionalPower
 
-	self:RegisterEvent('UNIT_MANA', Path)
-	self:RegisterEvent('UNIT_MAXMANA', Path)
+	--! audit perf: unitless, because Update tests the literal player, not self.unit -- in a
+	--! vehicle self.unit is vehicle while the event still fires for player. See GAP-028.
+	self:RegisterEvent('UNIT_MANA', Path, true)
+	self:RegisterEvent('UNIT_MAXMANA', Path, true)
 
 	element:Show()
 
@@ -240,7 +242,8 @@ local function Enable(self, unit)
 		element.__owner = self
 		element.ForceUpdate = ForceUpdate
 
-		self:RegisterEvent('UNIT_DISPLAYPOWER', VisibilityPath)
+		--! audit perf: unitless -- Visibility never reads the fired unit. See GAP-028.
+		self:RegisterEvent('UNIT_DISPLAYPOWER', VisibilityPath, true)
 
 		if(element:IsObjectType('StatusBar') and not element:GetStatusBarTexture()) then
 			element:SetStatusBarTexture([[Interface\TargetingFrame\UI-StatusBar]])

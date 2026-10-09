@@ -53,6 +53,20 @@ NP.Healers = {}
 
 NP.GUIDList = {}
 
+--! audit perf: reverse index for GetGUIDByName, which used to walk all of GUIDList. The four
+--! unit types are the whole domain, so the sub-tables are made once and the lookup is two
+--! table reads with nothing allocated.
+NP.GUIDIndex = {
+	FRIENDLY_PLAYER = {},
+	FRIENDLY_NPC = {},
+	ENEMY_PLAYER = {},
+	ENEMY_NPC = {}
+}
+
+--! audit perf: how many plates carry each GUID, so SearchNameplateByGUID can skip its walk
+--! when no plate holds the one asked for. Maintained only by SetPlateGUID below.
+NP.GUIDPlateCount = {}
+
 NP.UnitByName = {}
 NP.NameByUnit = {}
 NP.ENEMY_PLAYER = {}
@@ -325,11 +339,48 @@ function NP:GetUnitTypeFromUnit(unit)
 	end
 end
 
+--! audit perf: single door into GUIDList so the index can never drift from it. All three
+--! writers guard on "not already known", so an entry is written once and never updated --
+--! that is what makes an insert-only index correct here.
+function NP:AddGUIDInfo(guid, name, unitType)
+	self.GUIDList[guid] = {name = name, unitType = unitType}
+
+	local byName = self.GUIDIndex[unitType]
+	if byName and name then
+		byName[name] = guid
+	end
+end
+
+--! audit perf: this walked every GUID the session had ever seen -- a table that only grows,
+--! never pruned -- and the walk repeated on every aura event of a plate whose lookup failed,
+--! because a miss leaves frame.guid nil. Two table reads now. On a name shared by several
+--! GUIDs the old pairs() walk already picked an arbitrary winner that could flip on a rehash;
+--! the index keeps the most recently seen one, which is stable and the better guess.
 function NP:GetGUIDByName(name, unitType)
-	for guid, info in pairs(self.GUIDList) do
-		if info.name == name and info.unitType == unitType then
-			return guid
+	local byName = self.GUIDIndex[unitType]
+	return byName and byName[name]
+end
+
+--! audit perf: the only writer of frame.guid, so GUIDPlateCount can never drift from it.
+--! It counts holders rather than storing the frame: a name shared by two mobs gives both
+--! plates the same GUID, so the walk below still picks the plate and behaves as before.
+function NP:SetPlateGUID(frame, guid)
+	local old = frame.guid
+	if old == guid then return end
+
+	if old then
+		local n = self.GUIDPlateCount[old]
+		if n and n > 1 then
+			self.GUIDPlateCount[old] = n - 1
+		else
+			self.GUIDPlateCount[old] = nil
 		end
+	end
+
+	frame.guid = guid
+
+	if guid then
+		self.GUIDPlateCount[guid] = (self.GUIDPlateCount[guid] or 0) + 1
 	end
 end
 
@@ -351,9 +402,9 @@ function NP:OnShow(isConfig, dontHideHighlight)
 	if unit then
 		frame.unit = unit
 		frame.isGroupUnit = true
-		frame.guid = UnitGUID(unit)
+		NP:SetPlateGUID(frame, UnitGUID(unit))
 	else
-		frame.guid = NP:GetGUIDByName(frame.UnitName, unitType)
+		NP:SetPlateGUID(frame, NP:GetGUIDByName(frame.UnitName, unitType))
 	end
 
 	frame.UnitClass = NP:UnitClass(frame, unitType)
@@ -438,6 +489,16 @@ function NP:OnHide(isConfig, dontHideHighlight)
 	frame.RightIndicator:Hide()
 	frame.Shadow:Hide()
 	frame.Spark:Hide()
+	--! audit perf: these five lines hide the glow behind NP:Update_Glow's back, and
+	--! plates are recycled — this frame comes back for a different unit. Update_Glow
+	--! now remembers what it last showed, so the memo has to die here or it would
+	--! claim the glow is still up while the five objects above are hidden: a plate
+	--! that IS the target with no arrows on it. Only the show memo is cleared;
+	--! nothing above undoes a texture, a size or an anchor, so what Configure_Glow
+	--! set up survives the hide and does not need redoing on the next unit.
+	frame.glowShown, frame.glowShownStyle, frame.glowShownHealth = nil, nil, nil
+	frame.glowShownName, frame.glowShownIcon = nil, nil
+	frame.glowShownR, frame.glowShownG, frame.glowShownB = nil, nil, nil
 	frame.Health.r, frame.Health.g, frame.Health.b = nil, nil, nil
 	frame.Health:Hide()
 	frame.CastBar:Hide()
@@ -463,7 +524,7 @@ function NP:OnHide(isConfig, dontHideHighlight)
 	frame.TopLevelFrame = nil
 	frame.TopOffset = nil
 	frame.ThreatReaction = nil
-	frame.guid = nil
+	NP:SetPlateGUID(frame, nil)
 	frame.alpha = nil
 	frame.isAlphaChanged = nil
 	frame.RaidIconType = nil
@@ -507,6 +568,19 @@ end
 function NP:ForEachVisiblePlate(functionToRun, ...)
 	for frame in pairs(self.VisiblePlates) do
 		self[functionToRun](self, frame, ...)
+	end
+end
+
+--! audit perf: StyleFilterUpdate opens by asking StyleFilterTriggerEvents[event], and that answer
+--! is the same for every plate, yet the nine sweeps below asked it once per plate. The table only
+--! gets UNIT_HEALTH or the four power events when an enabled filter carries a health or power
+--! threshold (StyleFilter.lua:752, :757), so with none set the whole walk was a no-op the client
+--! still paid on every player health and power change. Ask once, then walk.
+function NP:StyleFilterSweep(event)
+	if not NP.StyleFilterTriggerEvents[event] then return end
+
+	for frame in pairs(NP.VisiblePlates) do
+		NP:StyleFilterUpdate(frame, event)
 	end
 end
 
@@ -575,6 +649,9 @@ function NP:OnCreated(frame)
 
 	local unitFrame = CreateFrame("Frame", format("ElvUI_NamePlate%d", plateID), frame)
 	frame.UnitFrame = unitFrame
+	--! audit perf: back-link the plate so OnUpdate does not buy it with GetParent every frame.
+	--! The unitFrame is never reparented, so this pair is fixed for the object's life.
+	unitFrame.plate = frame
 	unitFrame:Hide()
 	unitFrame:SetAllPoints()
 	unitFrame:SetScript("OnEvent", self.OnEvent)
@@ -626,6 +703,9 @@ function NP:OnCreated(frame)
 
 	frame:HookScript("OnShow", self.OnShow)
 	frame:HookScript("OnHide", self.OnHide)
+	--! audit perf: the handler below only needs the unitFrame; hand it over instead of
+	--! walking GetParent().UnitFrame on every health tick of every plate.
+	Health.unitFrame = unitFrame
 	Health:HookScript("OnValueChanged", self.Update_HealthOnValueChanged)
 
 	self.CreatedPlates[frame] = true
@@ -721,7 +801,7 @@ function NP:SetTargetFrame(frame)
 
 			if not frame.isGroupUnit then
 				frame.unit = "target"
-				frame.guid = UnitGUID("target")
+				self:SetPlateGUID(frame, UnitGUID("target"))
 
 				self:RegisterEvents(frame)
 			end
@@ -802,8 +882,10 @@ function NP:SetTargetFrame(frame)
 		end
 	end
 
-	self:Configure_Glow(frame)
-	self:Update_Glow(frame)
+	--! audit perf: this pair is reached from NP:OnUpdate for every visible plate on every
+	--! frame. Configure_Glow returns the two widget states it has already read, Update_Glow
+	--! takes them — three C reads instead of six a plate a frame.
+	self:Update_Glow(frame, self:Configure_Glow(frame))
 end
 
 function NP:SetMouseoverFrame(frame)
@@ -815,7 +897,7 @@ function NP:SetMouseoverFrame(frame)
 
 			if not frame.isGroupUnit then
 				frame.unit = "mouseover"
-				frame.guid = UnitGUID("mouseover")
+				self:SetPlateGUID(frame, UnitGUID("mouseover"))
 
 				self:Update_CastBar(frame, nil, frame.unit)
 			end
@@ -848,26 +930,49 @@ end
 function NP:OnUpdate()
 	numChildren = WorldGetNumChildren(WorldFrame)
 	if lastChildern ~= numChildren then
-		findNewPlate(WorldGetChildren(WorldFrame))
+		--! audit perf: findNewPlate scans [lastChildern+1, numChildren], so a count that DROPPED
+		--! gives an empty range -- yet WorldFrame:GetChildren() had already pushed every child of
+		--! the world frame to feed it. A shrink needs the new number, not the scan.
+		if numChildren > lastChildern then
+			findNewPlate(WorldGetChildren(WorldFrame))
+		end
 		lastChildern = numChildren
 	end
 
+	--! audit perf: four methods resolved once a frame instead of once a plate. Read live,
+	--! so a hook installed on any of them after load is picked up on the next frame.
+	local SetMouseoverFrame, SetTargetFrame = NP.SetMouseoverFrame, NP.SetTargetFrame
+	local GetUnitInfo, ThreatSituation = NP.GetUnitInfo, NP.UnitDetailedThreatSituation
+
+	--! audit perf: at most one plate can be under the cursor, yet every plate was asked
+	--! whether its highlight is shown. With no mouseover unit no plate is highlighted, so
+	--! only the one still flagged needs the call -- the branch that clears the flag.
+	local mouseover = UnitExists("mouseover")
+
 	for frame in pairs(NP.VisiblePlates) do
+		--! audit perf: the parent is a fixed link set in OnCreated, and SetAlpha was written
+		--! even when the plate already sat at 1. Reading the alpha once covers both.
+		local parent = frame.plate
 		if hasTarget then
-			frame.alpha = frame:GetParent():GetAlpha()
-			frame:GetParent():SetAlpha(1)
+			local alpha = parent:GetAlpha()
+			frame.alpha = alpha
+			if alpha ~= 1 then
+				parent:SetAlpha(1)
+			end
 		else
 			frame.alpha = 1
 		end
 
-		NP:SetMouseoverFrame(frame)
-		NP:SetTargetFrame(frame)
+		if mouseover or frame.isMouseover then
+			SetMouseoverFrame(NP, frame)
+		end
+		SetTargetFrame(NP, frame)
 
-		if frame.UnitReaction ~= NP:GetUnitInfo(frame) then
+		if frame.UnitReaction ~= GetUnitInfo(NP, frame) then
 			NP:UpdateAllFrame(frame, nil, true)
 		end
 
-		local status = NP:UnitDetailedThreatSituation(frame)
+		local status = ThreatSituation(NP, frame)
 		if frame.ThreatStatus ~= status then
 			frame.ThreatStatus = status
 
@@ -886,6 +991,11 @@ function NP:CheckRaidIcon(frame)
 end
 
 function NP:SearchNameplateByGUID(guid)
+	--! audit perf: LibAuraInfo fires AURA_REMOVED for every row of the combat log without
+	--! filtering the destination, and almost none of those GUIDs are on screen, so this walk
+	--! ran over all visible plates to return nil. One hash read answers that case now.
+	if not self.GUIDPlateCount[guid] then return end
+
 	for frame in pairs(self.VisiblePlates) do
 		if frame.guid == guid then
 			return frame
@@ -976,7 +1086,7 @@ function NP:UPDATE_MOUSEOVER_UNIT()
 		for frame in pairs(self.VisiblePlates) do
 			if frame.UnitName == name and frame.UnitType == unitType then
 				if not self.GUIDList[guid] then
-					self.GUIDList[guid] = {name = name, unitType = frame.UnitType}
+					self:AddGUIDInfo(guid, name, frame.UnitType)
 					self.OnShow(frame:GetParent(), nil, true)
 					break
 				end
@@ -996,7 +1106,7 @@ function NP:PLAYER_FOCUS_CHANGED()
 		self.NameByUnit.focus = name
 
 		if not self.GUIDList[guid] then
-			self.GUIDList[guid] = {name = name, unitType = self:GetUnitTypeFromUnit("focus")}
+			self:AddGUIDInfo(guid, name, self:GetUnitTypeFromUnit("focus"))
 		end
 
 		unitName = name
@@ -1036,7 +1146,7 @@ function NP:PLAYER_REGEN_DISABLED()
 		SetCVar("nameplateShowEnemies", 0)
 	end
 
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "PLAYER_REGEN_DISABLED")
+	NP:StyleFilterSweep("PLAYER_REGEN_DISABLED")
 end
 
 function NP:PLAYER_REGEN_ENABLED()
@@ -1058,40 +1168,40 @@ function NP:PLAYER_REGEN_ENABLED()
 		SetCVar("nameplateShowEnemies", 1)
 	end
 
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "PLAYER_REGEN_ENABLED")
+	NP:StyleFilterSweep("PLAYER_REGEN_ENABLED")
 end
 
 function NP:UNIT_HEALTH(_, unit)
 	if unit ~= "player" then return end
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "UNIT_HEALTH")
+	NP:StyleFilterSweep("UNIT_HEALTH")
 end
 
 function NP:UNIT_MANA(_, unit)
 	if unit ~= "player" then return end
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "UNIT_MANA")
+	NP:StyleFilterSweep("UNIT_MANA")
 end
 
 function NP:UNIT_ENERGY(_, unit)
 	if unit ~= "player" then return end
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "UNIT_ENERGY")
+	NP:StyleFilterSweep("UNIT_ENERGY")
 end
 
 function NP:UNIT_FOCUS(_, unit)
 	if unit ~= "player" then return end
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "UNIT_FOCUS")
+	NP:StyleFilterSweep("UNIT_FOCUS")
 end
 
 function NP:UNIT_RAGE(_, unit)
 	if unit ~= "player" then return end
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "UNIT_RAGE")
+	NP:StyleFilterSweep("UNIT_RAGE")
 end
 
 function NP:SPELL_UPDATE_COOLDOWN(...)
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "SPELL_UPDATE_COOLDOWN")
+	NP:StyleFilterSweep("SPELL_UPDATE_COOLDOWN")
 end
 
 function NP:PLAYER_UPDATE_RESTING()
-	NP:ForEachVisiblePlate("StyleFilterUpdate", "PLAYER_UPDATE_RESTING")
+	NP:StyleFilterSweep("PLAYER_UPDATE_RESTING")
 end
 
 function NP:RAID_TARGET_UPDATE()
@@ -1117,20 +1227,43 @@ function NP:CacheArenaUnits()
 	end
 end
 
+--! audit perf: UNIT_NAME_UPDATE is delivered once per affected unit, and
+--! CacheGroupPetUnits is registered for all of them (see NP:Initialize), so every
+--! fire rebuilt the whole pet cache by BUILDING ITS UNIT TOKENS FROM SCRATCH:
+--! "raidpet"..i for the existence test and then format("raidpet%d", i) for the
+--! value — the same string created twice, up to 45 times per fire in a raid, and
+--! every one of them garbage a moment later. Lua 5.1 here has no JIT and interns
+--! nothing, so this was pure churn on the hottest per-unit event this module
+--! listens to. The tokens are constant, so they are built once, at load. Behaviour
+--! is byte-identical: the strings are the same strings, only made earlier.
+local unitRaid, unitRaidPet = {}, {}
+local unitParty, unitPartyPet, unitArenaPet = {}, {}, {}
+do
+	for i = 1, 40 do
+		unitRaid[i] = "raid"..i
+		unitRaidPet[i] = "raidpet"..i
+	end
+	for i = 1, 5 do
+		unitParty[i] = "party"..i
+		unitPartyPet[i] = "partypet"..i
+		unitArenaPet[i] = "arenapet"..i
+	end
+end
+
 function NP:CacheGroupUnits()
 	twipe(self.FRIENDLY_PLAYER)
 
 	if GetNumRaidMembers() > 0 then
 		for i = 1, 40 do
-			if UnitExists("raid"..i) then
-				local unit = format("raid%d", i)
+			local unit = unitRaid[i]
+			if UnitExists(unit) then
 				self.FRIENDLY_PLAYER[UnitName(unit)] = unit
 			end
 		end
 	elseif GetNumPartyMembers() > 0 then
 		for i = 1, 5 do
-			if UnitExists("party"..i) then
-				local unit = format("party%d", i)
+			local unit = unitParty[i]
+			if UnitExists(unit) then
 				self.FRIENDLY_PLAYER[UnitName(unit)] = unit
 			end
 		end
@@ -1142,22 +1275,22 @@ function NP:CacheGroupPetUnits()
 	twipe(self.ENEMY_NPC)
 
 	for i = 1, 5 do
-		if UnitExists("arenapet"..i) then
-			local unit = format("arenapet%d", i)
+		local unit = unitArenaPet[i]
+		if UnitExists(unit) then
 			self.ENEMY_NPC[UnitName(unit)] = unit
 		end
 	end
 	if GetNumRaidMembers() > 0 then
 		for i = 1, 40 do
-			if UnitExists("raidpet"..i) then
-				local unit = format("raidpet%d", i)
+			local unit = unitRaidPet[i]
+			if UnitExists(unit) then
 				self.FRIENDLY_NPC[UnitName(unit)] = unit
 			end
 		end
 	elseif GetNumPartyMembers() > 0 then
 		for i = 1, 5 do
-			if UnitExists("partypet"..i) then
-				local unit = format("partypet%d", i)
+			local unit = unitPartyPet[i]
+			if UnitExists(unit) then
 				self.FRIENDLY_NPC[UnitName(unit)] = unit
 			end
 		end

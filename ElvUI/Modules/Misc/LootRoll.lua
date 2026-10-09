@@ -8,7 +8,6 @@ local tinsert, twipe = table.insert, table.wipe
 --WoW API / Variables
 local ChatEdit_InsertLink = ChatEdit_InsertLink
 local CreateFrame = CreateFrame
-local CursorOnUpdate = CursorOnUpdate
 local CursorUpdate = CursorUpdate
 local DressUpItemLink = DressUpItemLink
 local GetLootRollItemInfo = GetLootRollItemInfo
@@ -209,6 +208,7 @@ function M:CreateRollButton(parent, rollType)
 end
 
 local function itemOnEnter(self)
+	self.tooltipRollID = self.rollID
 	GameTooltip:SetOwner(self, POSITION == "TOP" and "ANCHOR_BOTTOMLEFT" or "ANCHOR_TOPLEFT")
 	GameTooltip:SetLootRollItem(self.rollID)
 
@@ -222,11 +222,17 @@ end
 
 local function itemOnUpdate(self)
 	if GameTooltip:IsOwned(self) then
-		GameTooltip:SetOwner(self, POSITION == "TOP" and "ANCHOR_BOTTOMLEFT" or "ANCHOR_TOPLEFT")
-		GameTooltip:SetLootRollItem(self.rollID)
-	end
+		--! audit perf: the tooltip was torn down and rebuilt every frame the cursor rested
+		--! on the icon, though SetLootRollItem returns the same item for the life of a rollID.
+		--! Rebuild only when the frame was reused for another roll under a resting cursor.
+		if self.tooltipRollID ~= self.rollID then
+			self.tooltipRollID = self.rollID
+			GameTooltip:SetOwner(self, POSITION == "TOP" and "ANCHOR_BOTTOMLEFT" or "ANCHOR_TOPLEFT")
+			GameTooltip:SetLootRollItem(self.rollID)
+		end
 
-	CursorOnUpdate(self)
+		CursorUpdate(self)
+	end
 end
 
 local function itemOnClick(self)

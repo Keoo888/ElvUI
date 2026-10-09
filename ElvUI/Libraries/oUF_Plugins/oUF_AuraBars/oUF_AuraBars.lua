@@ -148,29 +148,56 @@ local function CreateAuraBar(self, anchor)
 	return frame
 end
 
-local function UpdateBars(element)
+local function UpdateBars(element, elapsed)
 	local bars = element.bars
 	local currentTime = GetTime()
+
+	--! audit perf: this OnUpdate has no throttle, and the text under a bar shows tenths of a
+	--! second, so rewriting it at frame rate could not change a pixel -- it only built and
+	--! interned a fresh string per bar per frame. The bar value still moves every frame.
+	local textElapsed = (element.textElapsed or 0) + elapsed
+	local writeText = textElapsed >= 0.1
+	element.textElapsed = writeText and 0 or textElapsed
+
+	local wantSpark = element.spark == true
+	local scaleTime = element.scaleTime
 
 	for i = 1, #bars do
 		local frame = bars[i]
 		if not frame:IsVisible() then break end
 
 		local bar = frame.statusBar
+		local aura = bar.aura
 
-		if bar.aura.noTime then
-			bar.spelltime:SetText()
-			bar.spark:Hide()
+		if aura.noTime then
+			--! audit perf: an aura with no duration kept clearing an already empty text and
+			--! hiding an already hidden spark, two C calls a frame for as long as it was up.
+			if not bar.blanked then
+				bar.spelltime:SetText()
+				bar.spark:Hide()
+				bar.blanked = true
+			end
 		else
-			local timeleft = bar.aura.expirationTime - currentTime
-			bar:SetValue(timeleft)
-			bar.spelltime:SetText(formatTime(timeleft))
+			bar.blanked = nil
 
-			if element.spark == true then
-				if element.scaleTime and ((element.scaleTime <= 0) or (element.scaleTime > 0 and timeleft < element.scaleTime)) then
-					bar.spark:Show()
-				else
-					bar.spark:Hide()
+			local timeleft = aura.expirationTime - currentTime
+			bar:SetValue(timeleft)
+
+			if writeText then
+				bar.spelltime:SetText(formatTime(timeleft))
+			end
+
+			if wantSpark then
+				--! audit perf: the spark was shown or hidden every frame although it only
+				--! changes when timeleft crosses the threshold.
+				local show = (scaleTime and ((scaleTime <= 0) or (scaleTime > 0 and timeleft < scaleTime))) and true or false
+				if show ~= bar.sparkShown then
+					if show then
+						bar.spark:Show()
+					else
+						bar.spark:Hide()
+					end
+					bar.sparkShown = show
 				end
 			end
 		end
@@ -206,8 +233,22 @@ local function Update(self, event, unit)
 		helpOrHarm = isFriend and "HELPFUL" or "HARMFUL"
 	end
 
-	-- Create a table of auras to display
-	local auras = {}
+	--! audit perf: this built a fresh list table plus one record per aura on every UNIT_AURA and
+	--! dropped the whole set on the next one. Both are reused now: auraCache is the list,
+	--! auraPool owns the records so truncating the list does not free them. Every one of the 13
+	--! fields is rewritten below on both paths, so a reused record carries nothing stale.
+	local auras = element.auraCache
+	if not auras then
+		auras = {}
+		element.auraCache = auras
+	end
+
+	local pool = element.auraPool
+	if not pool then
+		pool = {}
+		element.auraPool = pool
+	end
+
 	local lastAuraIndex = 0
 
 	if element.forceShow then
@@ -215,22 +256,29 @@ local function Update(self, event, unit)
 		local name, rank, icon = GetSpellInfo(spellID)
 		local count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate = 5, "Magic", 0, 0, "player", nil, nil
 
-		for i = 1, element.maxBars do
+		for _ = 1, element.maxBars do
 			lastAuraIndex = lastAuraIndex + 1
-			auras[lastAuraIndex] = {}
-			auras[lastAuraIndex].spellID = spellID
-			auras[lastAuraIndex].name = name
-			auras[lastAuraIndex].rank = rank
-			auras[lastAuraIndex].icon = icon
-			auras[lastAuraIndex].count = count
-			auras[lastAuraIndex].debuffType = debuffType
-			auras[lastAuraIndex].duration = duration
-			auras[lastAuraIndex].expirationTime = expirationTime
-			auras[lastAuraIndex].unitCaster = unitCaster
-			auras[lastAuraIndex].isStealable = isStealable
-			auras[lastAuraIndex].noTime = (duration == 0 and expirationTime == 0)
-			auras[lastAuraIndex].filter = helpOrHarm
-			auras[lastAuraIndex].shouldConsolidate = shouldConsolidate
+
+			local rec = pool[lastAuraIndex]
+			if not rec then
+				rec = {}
+				pool[lastAuraIndex] = rec
+			end
+			auras[lastAuraIndex] = rec
+
+			rec.spellID = spellID
+			rec.name = name
+			rec.rank = rank
+			rec.icon = icon
+			rec.count = count
+			rec.debuffType = debuffType
+			rec.duration = duration
+			rec.expirationTime = expirationTime
+			rec.unitCaster = unitCaster
+			rec.isStealable = isStealable
+			rec.noTime = (duration == 0 and expirationTime == 0)
+			rec.filter = helpOrHarm
+			rec.shouldConsolidate = shouldConsolidate
 		end
 	else
 		local i = 0
@@ -242,22 +290,35 @@ local function Update(self, event, unit)
 
 			if (element.filter or DefaultFilter)(self, unit, name, rank, icon, count, debuffType, duration, expirationTime, unitCaster, isStealable, shouldConsolidate, spellID) then
 				lastAuraIndex = lastAuraIndex + 1
-				auras[lastAuraIndex] = {}
-				auras[lastAuraIndex].spellID = spellID
-				auras[lastAuraIndex].name = name
-				auras[lastAuraIndex].rank = rank
-				auras[lastAuraIndex].icon = icon
-				auras[lastAuraIndex].count = count
-				auras[lastAuraIndex].debuffType = debuffType
-				auras[lastAuraIndex].duration = duration
-				auras[lastAuraIndex].expirationTime = expirationTime
-				auras[lastAuraIndex].unitCaster = unitCaster
-				auras[lastAuraIndex].isStealable = isStealable
-				auras[lastAuraIndex].noTime = (duration == 0 and expirationTime == 0)
-				auras[lastAuraIndex].filter = helpOrHarm
-				auras[lastAuraIndex].shouldConsolidate = shouldConsolidate
+
+				local rec = pool[lastAuraIndex]
+				if not rec then
+					rec = {}
+					pool[lastAuraIndex] = rec
+				end
+				auras[lastAuraIndex] = rec
+
+				rec.spellID = spellID
+				rec.name = name
+				rec.rank = rank
+				rec.icon = icon
+				rec.count = count
+				rec.debuffType = debuffType
+				rec.duration = duration
+				rec.expirationTime = expirationTime
+				rec.unitCaster = unitCaster
+				rec.isStealable = isStealable
+				rec.noTime = (duration == 0 and expirationTime == 0)
+				rec.filter = helpOrHarm
+				rec.shouldConsolidate = shouldConsolidate
 			end
 		end
+	end
+
+	--! audit perf: the list is reused, so drop the tail left by a longer previous pass before
+	--! the sort -- tsort walks #auras and would otherwise pull a stale record into a live slot.
+	for i = lastAuraIndex + 1, #auras do
+		auras[i] = nil
 	end
 
 	if element.sort and not element.forceShow then
@@ -298,6 +359,11 @@ local function Update(self, event, unit)
 
 		-- Backup the details of the aura onto the bar, so the OnUpdate function can use it
 		bar.aura = aura
+
+		--! audit perf: this slot may have held another aura a moment ago, so the state UpdateBars
+		--! caches about it is stale here and has to be dropped with the aura it described.
+		bar.blanked = nil
+		bar.sparkShown = nil
 
 		-- Configure
 		if bar.aura.noTime then

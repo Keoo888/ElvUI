@@ -366,9 +366,12 @@ local function initObject(unit, style, styleFunc, header, ...)
 		end
 
 		if(not (suffix == 'target' or objectUnit and objectUnit:match('target'))) then
-			object:RegisterEvent('UNIT_ENTERING_VEHICLE', updateActiveUnit)
-			object:RegisterEvent('UNIT_ENTERED_VEHICLE', updateActiveUnit)
-			object:RegisterEvent('UNIT_EXITING_VEHICLE', updateActiveUnit)
+			--! audit perf: unitless -- updateActiveUnit ignores the fired unit and recomputes
+			--! the frame unit from its attributes, which is exactly what a vehicle swap needs.
+			--! See GAP-028.
+			object:RegisterEvent('UNIT_ENTERING_VEHICLE', updateActiveUnit, true)
+			object:RegisterEvent('UNIT_ENTERED_VEHICLE', updateActiveUnit, true)
+			object:RegisterEvent('UNIT_EXITING_VEHICLE', updateActiveUnit, true)
 			object:RegisterEvent('PLAYER_ENTERING_WORLD', updateActiveUnit)
 
 			-- We don't need to register UNIT_PET for the player unit. We register it

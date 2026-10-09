@@ -36,16 +36,12 @@ local positionValues2 = {
 }
 
 
-local RaidIconBit = {
-	["STAR"] = 0x00100000,
-	["CIRCLE"] = 0x00200000,
-	["DIAMOND"] = 0x00400000,
-	["TRIANGLE"] = 0x00800000,
-	["MOON"] = 0x01000000,
-	["SQUARE"] = 0x02000000,
-	["CROSS"] = 0x04000000,
-	["SKULL"] = 0x08000000
-}
+--! audit perf: an array instead of a hash, so the scan is a numeric for over eight slots and not
+--! nine next() calls. RaidIconMask is the union of the eight bits: one band() answers "no mark at
+--! all", which is the case for nearly every unit.
+local RaidIconBit = {0x00100000, 0x00200000, 0x00400000, 0x00800000, 0x01000000, 0x02000000, 0x04000000, 0x08000000}
+local RaidIconName = {"STAR", "CIRCLE", "DIAMOND", "TRIANGLE", "MOON", "SQUARE", "CROSS", "SKULL"}
+local RaidIconMask = 0x0FF00000
 
 local ByRaidIcon = {}
 
@@ -268,7 +264,7 @@ function NP:UpdateElement_Auras(frame)
 		end
 
 		if guid then
-			frame.guid = guid
+			self:SetPlateGUID(frame, guid)
 		elseif not frame.Buffs.forceShow and not frame.Debuffs.forceShow then
 			return
 		end
@@ -277,6 +273,9 @@ function NP:UpdateElement_Auras(frame)
 	local db = NP.db.units[frame.UnitType].buffs
 	if db.enable then
 		local buffs = frame.Buffs
+		--! audit perf: hand the pass db to AuraFilter instead of letting it rebuild the same
+		--! four-deep path for every aura of every plate.
+		buffs.auraDB = db
 		buffs.visibleBuffs = NP:UpdateElement_AuraIcons(buffs, guid, buffs.filter or "HELPFUL", db.perrow * db.numrows)
 
 		if #buffs > buffs.anchoredIcons then
@@ -289,6 +288,7 @@ function NP:UpdateElement_Auras(frame)
 	db = NP.db.units[frame.UnitType].debuffs
 	if db.enable then
 		local debuffs = frame.Debuffs
+		debuffs.auraDB = db
 		debuffs.visibleDebuffs = NP:UpdateElement_AuraIcons(debuffs, guid, debuffs.filter or "HARMFUL", db.perrow * db.numrows, true)
 
 		if #debuffs > debuffs.anchoredIcons then
@@ -304,16 +304,12 @@ end
 function NP:UpdateElement_AurasByGUID(guid, event)
 	local destName, destFlags = LAI:GetGUIDInfo(guid)
 
-	if destName then
-		destName = split("-", destName)
-	end
-
 	local raidIcon
-	if destFlags then
-		for iconName, bitmask in pairs(RaidIconBit) do
-			if band(destFlags, bitmask) > 0 then
-				ByRaidIcon[iconName] = guid
-				raidIcon = iconName
+	if destFlags and band(destFlags, RaidIconMask) > 0 then
+		for i = 1, 8 do
+			if band(destFlags, RaidIconBit[i]) > 0 then
+				raidIcon = RaidIconName[i]
+				ByRaidIcon[raidIcon] = guid
 				break
 			end
 		end
@@ -322,7 +318,9 @@ function NP:UpdateElement_AurasByGUID(guid, event)
 	local frame = self:SearchForFrame(guid, raidIcon)
 	if frame then
 		if frame.UnitType ~= "ENEMY_NPC" and not self.GUIDList[guid] then
-			self.GUIDList[guid] = {name = destName, unitType = frame.UnitType}
+			--! audit perf: the name was split on every aura event, but this branch is its only
+			--! reader and it runs once per GUID.
+			self:AddGUIDInfo(guid, destName and split("-", destName), frame.UnitType)
 		end
 
 		self:UpdateElement_Auras(frame)
@@ -333,6 +331,7 @@ function NP:Construct_AuraIcon(parent, index)
 	local db = NP.db.units[parent:GetParent().UnitType][parent.type]
 
 	local button = CreateFrame("StatusBar", "$parentButton"..index, parent)
+	button.header = parent --! audit perf: fixed header, read by AuraFilter instead of GetParent()
 	NP:StyleFrame(button, true)
 
 	button:SetStatusBarTexture(E.media.blankTex)
@@ -395,16 +394,40 @@ function NP:ConstructElement_Auras(frame, auraType)
 	auras:SetPoint("TOP", 0, 22)
 	auras.anchoredIcons = 0
 	auras.type = string.lower(auraType)
+	--! audit perf: the plate's unitFrame never changes for this header, but AuraFilter bought it
+	--! with a GetParent() C call per aura. Keep it here instead.
+	auras.__owner = frame
 
 	return auras
 end
 
-function NP:CheckFilter(name, spellID, isPlayer, allowDuration, noDuration, ...)
-	for i = 1, select("#", ...) do
-		local filterName = select(i, ...)
+--! audit perf: same as UF:GetFilterPriority — the priority string is configuration, so it is
+--! split once per distinct value instead of once per aura per plate. No pattern half here:
+--! this filter has no Friendly:/Enemy: prefixes.
+local priorityCache = {}
+function NP:GetFilterPriority(priority)
+	local parsed = priorityCache[priority]
+	if not parsed then
+		parsed = { split(",", priority) }
+		parsed.n = #parsed
+		priorityCache[priority] = parsed
+	end
+
+	return parsed
+end
+
+function NP:CheckFilter(name, spellID, isPlayer, allowDuration, noDuration, parsed)
+	--! audit perf: both filter tables are loop-invariant -- specialFilters is written once at
+	--! load, aurafilters only on a profile change -- yet the four-deep reach was walked per
+	--! entry and aurafilters was read twice for one answer. Reach once, read once.
+	local specialFilters = G.nameplates.specialFilters
+	local auraFilters = E.global.unitframe.aurafilters
+
+	for i = 1, parsed.n do
+		local filterName = parsed[i]
 		if not filterName then return true end
-		if G.nameplates.specialFilters[filterName] or E.global.unitframe.aurafilters[filterName] then
-			local filter = E.global.unitframe.aurafilters[filterName]
+		local filter = auraFilters[filterName]
+		if filter or specialFilters[filterName] then
 			if filter then
 				local filterType = filter.type
 				local spellList = filter.spells
@@ -429,9 +452,11 @@ function NP:CheckFilter(name, spellID, isPlayer, allowDuration, noDuration, ...)
 end
 
 function NP:AuraFilter(guid, button, name, texture, count, debuffType, duration, expiration, caster, spellID)
-	local parent = button:GetParent()
-	local parentType = parent.type
-	local db = NP.db.units[parent:GetParent().UnitType][parentType]
+	local parent = button.header
+	--! audit perf: UpdateElement_Auras already holds this db for the whole pass and is the only
+	--! caller chain, so it hands it over. The derivation stays as a fallback.
+	local db = parent.auraDB
+	if not db then db = NP.db.units[parent.__owner.UnitType][parent.type] end
 	if not db then return true end
 
 	local isPlayer = caster == E.myguid
@@ -447,15 +472,17 @@ function NP:AuraFilter(guid, button, name, texture, count, debuffType, duration,
 	button.spell = name
 	button.priority = 0
 
-	if not db.filters then return true end
+	--! audit perf: db.filters was reached up to six times for one aura.
+	local filters = db.filters
+	if not filters then return true end
 
-	local priority = db.filters.priority
+	local priority = filters.priority
 	local noDuration = (not duration or duration == 0)
-	local allowDuration = noDuration or (duration and (duration > 0) and db.filters.maxDuration == 0 or duration <= db.filters.maxDuration) and (db.filters.minDuration == 0 or duration >= db.filters.minDuration)
+	local allowDuration = noDuration or (duration and (duration > 0) and filters.maxDuration == 0 or duration <= filters.maxDuration) and (filters.minDuration == 0 or duration >= filters.minDuration)
 	local filterCheck
 
 	if priority ~= "" then
-		filterCheck = NP:CheckFilter(name, spellID, isPlayer, allowDuration, noDuration, split(",", priority))
+		filterCheck = NP:CheckFilter(name, spellID, isPlayer, allowDuration, noDuration, NP:GetFilterPriority(priority))
 	else
 		filterCheck = allowDuration and true -- Allow all auras to be shown when the filter list is empty, while obeying duration sliders
 	end

@@ -183,7 +183,23 @@ function E:GetFormattedText(style, min, max, dec)
 	if max == 0 then max = 1 end
 
 	if style == "CURRENT" or ((style == "CURRENT_MAX" or style == "CURRENT_MAX_PERCENT" or style == "CURRENT_PERCENT") and min == max) then
-		return format(E.GetFormattedTextStyles.CURRENT, E:ShortValue(min, dec))
+		--! audit perf: this was format("%s", <a string>) — the CURRENT style is the
+		--! literal "%s" and nothing ever changes it: the only writer is
+		--! BuildPrefixValues above, whose gsub(str, "%d", dec) replaces DIGITS, and
+		--! "%s" has none. E:ShortValue already returns a string on both of its return
+		--! paths, so wrapping it in format() re-created the same bytes: a call across
+		--! into C, a luaL_Buffer copy, then a hash of the bytes and a bucket walk in
+		--! Lua 5.1's string table, and a fresh GC object whenever the value is new —
+		--! which for a health readout is nearly every time.
+		--! This branch is not the rare one. It is taken for style CURRENT and also
+		--! whenever min == max under the three CURRENT_* styles, i.e. for every unit
+		--! at full health, which out of combat is the whole raid. It is reached from
+		--! the oUF health and power tags and from the nameplate health text, so it
+		--! runs on every health event for every shown unit.
+		--! The dec argument is left exactly as it was on purpose: E:ShortValue(v)
+		--! declares one parameter and ignores it, and that mismatch is a separate
+		--! question from this one.
+		return E:ShortValue(min, dec)
 	else
 		local useStyle = E.GetFormattedTextStyles[style]
 		if not useStyle then return end

@@ -154,7 +154,8 @@ local function Path(self, event, ...)
 end
 
 local function RunesEnable(self)
-	self:RegisterEvent('UNIT_ENTERED_VEHICLE', VisibilityPath)
+	--! audit perf: unitless -- Visibility never reads the fired unit. See GAP-028.
+	self:RegisterEvent('UNIT_ENTERED_VEHICLE', VisibilityPath, true)
 	self:UnregisterEvent('UNIT_EXITED_VEHICLE', VisibilityPath)
 
 	self.Runes:Show()
@@ -170,7 +171,7 @@ end
 
 local function RunesDisable(self)
 	self:UnregisterEvent('UNIT_ENTERED_VEHICLE', VisibilityPath)
-	self:RegisterEvent('UNIT_EXITED_VEHICLE', VisibilityPath)
+	self:RegisterEvent('UNIT_EXITED_VEHICLE', VisibilityPath, true)
 
 	self.Runes:Hide()
 

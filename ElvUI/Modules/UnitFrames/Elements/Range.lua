@@ -38,17 +38,30 @@ function UF:UpdateRangeCheckSpells()
 	end
 end
 
+--! audit perf: "party"..i and "raid"..i built a fresh interned string on every probe, twice on a
+--! hit, and this scan runs for every group member five times a second. The 44 ids never change.
+local PARTY_UNITS, RAID_UNITS = {}, {}
+for i = 1, 4 do PARTY_UNITS[i] = "party"..i end
+for i = 1, 40 do RAID_UNITS[i] = "raid"..i end
+
 local function getUnit(unit)
-	if not find(unit, "party") or not find(unit, "raid") then
+	--! audit perf: this was `or`, which no string can falsify -- "party" and "raid" cannot both
+	--! be substrings of one id, so the scan ran even for an id that already was party#/raid#.
+	--! The caller only reaches here when UnitInParty or UnitInRaid is true, and the codex says
+	--! neither counts pets, so every input is a real member id and the scan could only return an
+	--! alias of the same character. Skipping it is the same answer without 4..40 UnitIsUnit calls.
+	if not find(unit, "party") and not find(unit, "raid") then
 		for i = 1, 4 do
-			if UnitIsUnit(unit, "party"..i) then
-				return "party"..i
+			local id = PARTY_UNITS[i]
+			if UnitIsUnit(unit, id) then
+				return id
 			end
 		end
 
 		for i = 1, 40 do
-			if UnitIsUnit(unit, "raid"..i) then
-				return "raid"..i
+			local id = RAID_UNITS[i]
+			if UnitIsUnit(unit, id) then
+				return id
 			end
 		end
 	else

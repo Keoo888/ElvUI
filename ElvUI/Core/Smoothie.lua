@@ -8,10 +8,6 @@ local handledObjects = {}
 local TARGET_FPS = 60
 local AMOUNT = 0.33
 
-local function lerp(startValue, endValue, amount)
-	return (1 - amount) * startValue + amount * endValue
-end
-
 local function clamp(v, min, max)
 	min = min or 0
 	max = max or 1
@@ -25,19 +21,19 @@ local function clamp(v, min, max)
 	return v
 end
 
-local function isCloseEnough(new, target, range)
-	if range > 0 then
-		return abs((new - target) / range) <= 0.001
-	end
-
-	return true
-end
-
 local frame = CreateFrame("Frame")
+--! audit perf: amount depends only on elapsed, so it is one value for the whole sweep -- it was
+--! recomputed per bar through a call. lerp and isCloseEnough were two more call frames per bar
+--! per frame; inlined verbatim here, this loop is the whole smoothing hot path.
 local function onUpdate(_, elapsed)
+	local amount = AMOUNT * elapsed * TARGET_FPS
+	if amount > 1 then amount = 1 elseif amount < 0 then amount = 0 end
+	local inverse = 1 - amount
+
 	for object, target in next, activeObjects do
-		local new = lerp(object._value, target, clamp(AMOUNT * elapsed * TARGET_FPS))
-		if isCloseEnough(new, target, object._max - object._min) then
+		local new = inverse * object._value + amount * target
+		local range = object._max - object._min
+		if not (range > 0) or abs((new - target) / range) <= 0.001 then
 			new = target
 			activeObjects[object] = nil
 		end
@@ -57,6 +53,11 @@ local function bar_SetSmoothedValue(self, value)
 end
 
 local function bar_SetSmoothedMinMaxValues(self, min, max)
+	--! audit perf: the range is re-sent on every health and power tick while it only changes on
+	--! buffs and level-ups. The call below is the sole writer of the widget range, so _min/_max
+	--! track it exactly; on an equal pair the rest of this function rewrites the same two fields.
+	if self._min == min and self._max == max then return end
+
 	min, max = tonumber(min), tonumber(max)
 
 	assert(min and max, "bar_SetSmoothedMinMaxValues requires (min and max) to be a number.")

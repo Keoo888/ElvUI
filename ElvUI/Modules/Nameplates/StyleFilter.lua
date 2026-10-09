@@ -349,8 +349,7 @@ function mod:StyleFilterSetChanges(frame, actions, HealthColorChanged, BorderCha
 		if frame.CastBar:IsShown() then frame.CastBar:Hide() end
 		if frame.Health:IsShown() then frame.Health:Hide() end
 		--hide the target indicator
-		mod:Configure_Glow(frame)
-		mod:Update_Glow(frame)
+		mod:Update_Glow(frame, mod:Configure_Glow(frame))
 		--position the name and update its color
 		frame.Name:ClearAllPoints()
 		frame.Name:SetJustifyH("CENTER")
@@ -382,8 +381,7 @@ function mod:StyleFilterSetChanges(frame, actions, HealthColorChanged, BorderCha
 		if frame.Health:IsShown() then frame.Health:Hide() end
 		frame.Level:SetText()
 		frame.Name:SetText()
-		mod:Configure_Glow(frame)
-		mod:Update_Glow(frame)
+		mod:Update_Glow(frame, mod:Configure_Glow(frame))
 		mod:Update_RaidIcon(frame)
 		mod:Configure_NameOnlyGlow(frame)
 	end
@@ -445,8 +443,7 @@ function mod:StyleFilterClearChanges(frame, HealthColorChanged, BorderChanged, F
 		frame.TopLevelFrame = nil --We can safely clear this here because it is set upon `UpdateElement_Auras` if needed
 		if mod.db.units[frame.UnitType].health.enable or (frame.isTarget and mod.db.alwaysShowTargetHealth) then
 			frame.Health:Show()
-			mod:Configure_Glow(frame)
-			mod:Update_Glow(frame)
+			mod:Update_Glow(frame, mod:Configure_Glow(frame))
 		end
 		frame.Name:ClearAllPoints()
 		frame.Level:ClearAllPoints()
@@ -472,8 +469,7 @@ function mod:StyleFilterClearChanges(frame, HealthColorChanged, BorderChanged, F
 		end
 		if mod.db.units[frame.UnitType].health.enable or (frame.isTarget and mod.db.alwaysShowTargetHealth) then
 			frame.Health:Show()
-			mod:Configure_Glow(frame)
-			mod:Update_Glow(frame)
+			mod:Update_Glow(frame, mod:Configure_Glow(frame))
 		end
 		frame.Name:ClearAllPoints()
 		frame.Level:ClearAllPoints()

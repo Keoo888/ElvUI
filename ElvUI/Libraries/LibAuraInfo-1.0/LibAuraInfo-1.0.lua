@@ -97,10 +97,6 @@ local function Round(num)
 	return floor(num + .5)
 end
 
-local function ResetUnitAuras(unitID)
-	lib:RemoveAllAurasFromGUID(UnitGUID(unitID))
-end
-
 function lib:AddAuraFromUnitID(dstGUID, name, texture, stackCount, debuffType, duration, expirationTime, srcGUID, spellID, filter)
 	self.GUIDAuras[dstGUID] = self.GUIDAuras[dstGUID] or {}
 	self.GUIDAuras[dstGUID][filter] = self.GUIDAuras[dstGUID][filter] or {}
@@ -117,18 +113,12 @@ function lib:AddAuraFromUnitID(dstGUID, name, texture, stackCount, debuffType, d
 	})
 end
 
-local CheckUnitAuras
+local CheckUnitAuras, ScanUnitAuras
 do
 	local i
 	local _, name, texture, stackCount, dispelType, duration, expirationTime, unitCaster, spellID
-	local dstGUID, dstName, srcGUID
-	function CheckUnitAuras(unitID, filterType)
-		dstGUID, dstName = UnitGUID(unitID), UnitName(unitID)
-
-		if lib.GUIDData_name[dstGUID] ~= dstName then
-			lib.GUIDData_name[dstGUID] = dstName
-		end
-
+	local srcGUID
+	function CheckUnitAuras(unitID, filterType, dstGUID)
 		--Since we have a unitID, lets clear our aura table and use 100% accurate aura info.
 		if lib.GUIDAuras[dstGUID] and lib.GUIDAuras[dstGUID][filterType] then
 			for j = #lib.GUIDAuras[dstGUID][filterType], 1, -1 do
@@ -179,6 +169,25 @@ do
 			i = i + 1
 			srcGUID = nil
 		end
+	end
+
+	--! audit perf: one scan per event instead of one per filter. CheckUnitAuras used to resolve the
+	--! GUID and the name itself and fire the callback at its own end, so every UNIT_AURA cost three
+	--! UnitGUID and two UnitName, and ran the whole nameplate aura rebuild twice -- the first time
+	--! with the HARMFUL table still empty, so the debuff row was drawn blank and redrawn at once.
+	function ScanUnitAuras(unitID)
+		local dstGUID, dstName = UnitGUID(unitID), UnitName(unitID)
+
+		lib:RemoveAllAurasFromGUID(dstGUID)
+
+		--! audit perf: guard kept as it was -- it is what keeps a nil GUID (unit with no target)
+		--! out of the table index, since reading a nil key is legal and writing one is not.
+		if lib.GUIDData_name[dstGUID] ~= dstName then
+			lib.GUIDData_name[dstGUID] = dstName
+		end
+
+		CheckUnitAuras(unitID, "HELPFUL", dstGUID)
+		CheckUnitAuras(unitID, "HARMFUL", dstGUID)
 
 		lib.callbacks:Fire("LibAuraInfo_UNIT_AURA", dstGUID)
 	end
@@ -192,15 +201,11 @@ lib.frame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 function lib.frame:UPDATE_MOUSEOVER_UNIT()
-	ResetUnitAuras("mouseover")
-	CheckUnitAuras("mouseover", "HELPFUL")
-	CheckUnitAuras("mouseover", "HARMFUL")
+	ScanUnitAuras("mouseover")
 end
 
 function lib.frame:PLAYER_TARGET_CHANGED()
-	ResetUnitAuras("target")
-	CheckUnitAuras("target", "HELPFUL")
-	CheckUnitAuras("target", "HARMFUL")
+	ScanUnitAuras("target")
 end
 
 do
@@ -208,18 +213,14 @@ do
 	function lib.frame:UNIT_TARGET(_, unitID)
 		if not UnitIsUnit(unitID, "player") then
 			targetID = unitID.."target"
-			ResetUnitAuras(targetID)
-			CheckUnitAuras(targetID, "HELPFUL")
-			CheckUnitAuras(targetID, "HARMFUL")
+			ScanUnitAuras(targetID)
 		end
 	end
 end
 
 function lib.frame:UNIT_AURA(_, unitID)
 	if not unitID then return end
-	ResetUnitAuras(unitID)
-	CheckUnitAuras(unitID, "HELPFUL")
-	CheckUnitAuras(unitID, "HARMFUL")
+	ScanUnitAuras(unitID)
 end
 
 ------------------------------------------------------------------------------------------------------
@@ -706,6 +707,13 @@ end
 function lib.frame:COMBAT_LOG_EVENT_UNFILTERED(event, timestamp, eventType, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, ...)
 	if lib.GUIDBlackList[dstGUID] then return end
 
+	--! audit perf: only eleven sub-events have a handler, and every reader of GUIDData is reached
+	--! through one of them, so ask for the handler first. Damage and heal rows -- the bulk of the
+	--! log -- used to pay two lookups and, on first sight of a GUID, two writes into tables that
+	--! are never wiped, so every mob that merely took a hit was kept for the whole session.
+	local handler = self[eventType]
+	if not handler then return end
+
 	if srcGUID and not lib.GUIDData_flags[srcGUID] then
 		SaveGUIDInfo(srcGUID, srcName, srcFlags)
 	end
@@ -713,9 +721,7 @@ function lib.frame:COMBAT_LOG_EVENT_UNFILTERED(event, timestamp, eventType, srcG
 		SaveGUIDInfo(dstGUID, dstName, dstFlags)
 	end
 
-	if self[eventType] then
-		self[eventType](self, eventType, timestamp, eventType, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, ...)
-	end
+	handler(self, eventType, timestamp, eventType, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, ...)
 end
 
 do
@@ -960,7 +966,9 @@ end
 
 do
 	local dosed, stackCount, expirationTime
-	function lib.frame:SPELL_AURA_APPLIED_REMOVED_DOSE(event, timestamp, eventType, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, spellID, spellName, spellSchool, auraType)
+	--! WotLK fix: the sub-event is SPELL_AURA_REMOVED_DOSE; there is no SPELL_AURA_APPLIED_REMOVED_DOSE
+	--! on 3.3.5a, so dispatch via self[eventType] never found this handler and stacks only ever grew.
+	function lib.frame:SPELL_AURA_REMOVED_DOSE(event, timestamp, eventType, srcGUID, srcName, srcFlags, dstGUID, dstName, dstFlags, spellID, spellName, spellSchool, auraType)
 		dosed, stackCount, expirationTime = lib:RemoveAuraDose(dstGUID, spellID, srcGUID, auraType == "DEBUFF" and "HARMFUL" or "HELPFUL")
 		if dosed then
 			lib.callbacks:Fire("LibAuraInfo_AURA_APPLIED_DOSE", dstGUID, spellID, srcGUID, spellSchool, auraType, stackCount, expirationTime)
@@ -981,6 +989,19 @@ function lib.frame:UNIT_DIED(event, timestamp, eventType, srcGUID, srcName, srcF
 	if lib.GUIDAuras[dstGUID] then
 		lib:RemoveAllAurasFromGUID(dstGUID)
 		lib.callbacks:Fire("LibAuraInfo_AURA_CLEAR", dstGUID)
+	end
+
+	--! audit perf: death is the only point where a GUID is certainly done, and nothing used to
+	--! drop it: RemoveAllAurasFromGUID only empties the arrays and the name/flags tables were
+	--! never touched, so all three grew for the whole session. Wiped after the callback, because
+	--! LibAuraInfo_AURA_CLEAR reads the flags back to find the plate by raid icon; a later row
+	--! for this GUID re-saves it in the handler prologue before any handler runs.
+	--! The guard is the trap noted on ScanUnitAuras: reading a nil key is legal, writing one is
+	--! not, so an unnamed destination would turn this into "table index is nil".
+	if dstGUID then
+		lib.GUIDAuras[dstGUID] = nil
+		lib.GUIDData_name[dstGUID] = nil
+		lib.GUIDData_flags[dstGUID] = nil
 	end
 end
 
@@ -1082,8 +1103,12 @@ end
 do
 	local data
 	function lib:GUIDAura(dstGUID, i, filter)
-		if self.GUIDAuras[dstGUID] and self.GUIDAuras[dstGUID][filter] and self.GUIDAuras[dstGUID][filter][i] then
-			data = self.GUIDAuras[dstGUID][filter][i]
+		--! audit perf: the same three-level chain was walked four times for one lookup, and the
+		--! nameplate aura pass calls this once per aura per plate. Walk it once.
+		local auras = self.GUIDAuras[dstGUID]
+		auras = auras and auras[filter]
+		data = auras and auras[i]
+		if data then
 			return true, data.name, data.texture, data.stackCount or 0, data.debuffType, data.duration, data.expirationTime, data.srcGUID, data.spellID
 		end
 		return false

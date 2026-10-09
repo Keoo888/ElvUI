@@ -23,7 +23,15 @@ function Private.UpdateUnits(frame, unit, realUnit)
 	end
 end
 
+--! audit perf: 3.3.5a has no RegisterUnitEvent, so the client hands every unit event to
+--! every registered frame and this paid a C IsVisible() on each one before the element
+--! handler threw the unit away. The unitEvents field was already half-wired here --
+--! documented on RegisterEvent, cleared on UnregisterEvent, never filled -- so fill it and
+--! ask the two table reads first. Only events nobody registered as unitless are filtered.
 local function onEvent(self, event, ...)
+	local unitEvents = self.unitEvents
+	if(unitEvents and unitEvents[event] and self.unit ~= (...)) then return end
+
 	if(self:IsVisible() or event == 'UNIT_COMBO_POINTS') then
 		return self[event](self, event, ...)
 	end
@@ -50,7 +58,7 @@ registering events.
              matched to the frame unit(s). Events that do not start with UNIT_ or are not known to be unit events are
              automatically considered unitless (boolean)
 --]]
-function frame_metatable.__index:RegisterEvent(event, func)
+function frame_metatable.__index:RegisterEvent(event, func, unitless)
 	-- Block OnUpdate polled frames from registering events.
 	-- UNIT_PORTRAIT_UPDATE and UNIT_MODEL_CHANGED which are used for
 	-- portrait updates.
@@ -58,6 +66,23 @@ function frame_metatable.__index:RegisterEvent(event, func)
 
 	argcheck(event, 2, 'string')
 	argcheck(func, 3, 'function')
+
+	--! audit perf: remember whether onEvent may discard this event by unit. false is sticky:
+	--! two elements can register the same event on one frame, one of them unitless (UNIT_MANA
+	--! is Power plus AdditionalPower), and a single unitless handler forbids filtering for all.
+	local unitEvents = self.unitEvents
+	if(unitless or not event:match('^UNIT_')) then
+		if(not unitEvents) then
+			unitEvents = {}
+			self.unitEvents = unitEvents
+		end
+
+		unitEvents[event] = false
+	elseif(not unitEvents) then
+		self.unitEvents = {[event] = true}
+	elseif(unitEvents[event] == nil) then
+		unitEvents[event] = true
+	end
 
 	local curev = self[event]
 	local kind = type(curev)

@@ -4,6 +4,11 @@ local Private = oUF.Private
 
 local frame_metatable = Private.frame_metatable
 
+--! audit perf: colorsAndPercent runs per gradient call, i.e. per health tick once "colour health
+--! by value" is on, and resolved all four of these through _G every time.
+local select = select
+local modf = math.modf
+
 local colors = {
 	smooth = {
 		1, 0, 0,
@@ -105,7 +110,7 @@ local function colorsAndPercent(a, b, ...)
 	end
 
 	local num = select('#', ...) / 3
-	local segment, relperc = math.modf((a / b) * (num - 1))
+	local segment, relperc = modf((a / b) * (num - 1))
 	return relperc, select((segment * 3) + 1, ...)
 end
 

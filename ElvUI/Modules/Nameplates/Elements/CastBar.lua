@@ -50,7 +50,12 @@ function NP:Update_CastBarOnUpdate(elapsed)
 				elseif self.channelTimeFormat == "REMAINING" then
 					self.Time:SetFormattedText("%.1f |cffaf5050%.2f|r", self.value, self.delay)
 				elseif self.channelTimeFormat == "REMAININGMAX" then
-					self.Time:SetFormattedText("%.1f / %.2f |cffaf5050%.2f|r", self.value, self.max, self.max, self.delay)
+					--! audit fix: self.max was passed twice and self.delay fell off the
+					--! end — three %-places, four arguments, and Lua 5.1 drops the extra
+					--! one without a word. The channel bar showed the max time where the
+					--! delay belonged, so a pushed-back channel looked undelayed. The
+					--! other three branches of this block have the intended shape.
+					self.Time:SetFormattedText("%.1f / %.2f |cffaf5050%.2f|r", self.value, self.max, self.delay)
 				end
 			else
 				if self.castTimeFormat == "CURRENT" then
