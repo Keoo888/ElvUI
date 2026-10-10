@@ -739,16 +739,21 @@ function OnEvent(frame, event, arg1, ...)
 			UpdateUsable(button)
 		end
 	elseif event == "ACTIONBAR_UPDATE_COOLDOWN" then
+		--! audit perf: the tooltip owner is the same for every button inside one fire, so
+		--! ask once instead of per button — at most one of them can own it, and UpdateTooltip
+		--! re-anchors to that same button. Saves a global read and a C call per button.
+		local owner = GameTooltip:GetOwner()
 		for button in next, ActionButtons do
 			UpdateCooldown(button)
-			if GameTooltip:GetOwner() == button then
+			if owner == button then
 				UpdateTooltip(button)
 			end
 		end
 	elseif event == "SPELL_UPDATE_COOLDOWN" then
+		local owner = GameTooltip:GetOwner()
 		for button in next, NonActionButtons do
 			UpdateCooldown(button)
-			if GameTooltip:GetOwner() == button then
+			if owner == button then
 				UpdateTooltip(button)
 			end
 		end

@@ -328,7 +328,9 @@ local function Constructor()
 	editBox:SetMultiLine(true)
 	editBox:EnableMouse(true)
 	editBox:SetAutoFocus(false)
-	editBox:SetCountInvisibleLetters(false)
+	--! WotLK fix: EditBox:SetCountInvisibleLetters does not exist on 3.3.5a (retail-only),
+	--! and it sat unguarded in the constructor, so every multiline option field died on
+	--! first draw. false is the retail default anyway, so dropping it changes nothing.
 	editBox:SetScript("OnCursorChanged", OnCursorChanged)
 	editBox:SetScript("OnEditFocusLost", OnEditFocusLost)
 	editBox:SetScript("OnEnter", OnEnter)
