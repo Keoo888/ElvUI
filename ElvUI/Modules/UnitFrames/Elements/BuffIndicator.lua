@@ -67,10 +67,15 @@ function UF:UpdateAuraWatch(frame, petOverride, db)
 	local auras = frame.AuraWatch
 	db = db and db.buffIndicator or frame.db.buffIndicator
 
+	--! audit perf: hiding the element did not stop oUF_AuraWatch's Update, which leaves early only
+	--! on an empty icon table. A disabled indicator kept paying a full HELPFUL+HARMFUL UnitAura
+	--! walk per UNIT_AURA. The icons are kept -- frames cannot be freed -- so flag it instead.
 	if not db.enable then
+		auras.watchDisabled = true
 		auras:Hide()
 		return
 	else
+		auras.watchDisabled = nil
 		auras:Show()
 	end
 

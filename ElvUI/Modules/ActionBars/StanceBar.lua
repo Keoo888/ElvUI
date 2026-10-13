@@ -22,12 +22,30 @@ local NUM_SHAPESHIFT_SLOTS = NUM_SHAPESHIFT_SLOTS
 local bar = CreateFrame("Frame", "ElvUI_StanceBar", E.UIParent, "SecureHandlerStateTemplate")
 bar:SetFrameStrata("LOW")
 
+--! audit perf: both loops below rebuilt "ElvUI_StanceBarButtonN" and its Icon/Cooldown child
+--! names by concatenation and looked them up in _G on every slot of every fire, and walked all
+--! ten slots for a class that has three. UPDATE_SHAPESHIFT_COOLDOWN alone fires 5.95/s in combat
+--! (measured). The children never change once the button exists, so they are kept on it.
+local function StanceParts(i)
+	local button = bar.buttons and bar.buttons[i]
+	if not button then return end
+	local icon = button.elvIcon
+	if not icon then
+		local name = button:GetName()
+		icon = _G[name.."Icon"]
+		button.elvIcon = icon
+		button.elvCooldown = _G[name.."Cooldown"]
+	end
+	return button, icon, button.elvCooldown
+end
+
 function AB:UPDATE_SHAPESHIFT_COOLDOWN()
 	local numForms = GetNumShapeshiftForms()
-	local start, duration, enable, cooldown
-	for i = 1, NUM_SHAPESHIFT_SLOTS do
-		if i <= numForms then
-			cooldown = _G["ElvUI_StanceBarButton"..i.."Cooldown"]
+	local start, duration, enable
+	local button, icon, cooldown
+	for i = 1, numForms do
+		button, icon, cooldown = StanceParts(i)
+		if cooldown then
 			start, duration, enable = GetShapeshiftFormCooldown(i)
 			CooldownFrame_SetTimer(cooldown, start, duration, enable)
 		end
@@ -39,16 +57,13 @@ end
 function AB:StyleShapeShift()
 	local numForms = GetNumShapeshiftForms()
 	local texture, name, isActive, isCastable, _
-	local buttonName, button, icon, cooldown
+	local button, icon, cooldown
 	local stance = GetShapeshiftForm()
 
-	for i = 1, NUM_SHAPESHIFT_SLOTS do
-		buttonName = "ElvUI_StanceBarButton"..i
-		button = _G[buttonName]
-		icon = _G[buttonName.."Icon"]
-		cooldown = _G[buttonName.."Cooldown"]
+	for i = 1, numForms do
+		button, icon, cooldown = StanceParts(i)
 
-		if i <= numForms then
+		if button then
 			texture, name, isActive, isCastable = GetShapeshiftFormInfo(i)
 
 			if self.db.stanceBar.style == "darkenInactive" then

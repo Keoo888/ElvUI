@@ -415,21 +415,42 @@ end
 function UF:AuraPreUpdate(unit)
 	self.filterUnit = unit
 	self.filterIsFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
+
+	--! audit perf: db, the parsed priority list and the two duration bounds are the same for
+	--! every aura of this pass, yet AuraFilter re-reached them per aura. oUF calls PreUpdate
+	--! once right before the filter loop, so resolve them here and let AuraFilter read fields.
+	local parent = self.__owner
+	local db = parent and parent.db and parent.db[self.type]
+	self.filterDB = db
+
+	local priority = db and db.priority
+	self.filterParsed = (priority and priority ~= "") and UF:GetFilterPriority(priority) or nil
+	self.filterMinDuration = db and db.minDuration or 0
+	self.filterMaxDuration = db and db.maxDuration or 0
 end
 
 function UF:AuraFilter(unit, button, name, _, _, _, debuffType, duration, expiration, caster, isStealable, _, spellID)
 	if not name then return end -- checking for an aura that is not there, pass nil to break while loop
 
-	--! audit perf: oUF keeps the owner frame in __owner, so GetParent() was a C call per aura.
-	local parent = self.__owner
-	local db = parent.db and parent.db[self.type]
+	--! audit perf: AuraPreUpdate resolved db, the priority parse and the duration bounds once
+	--! for this pass; only redo that work when it has not run for this unit.
+	local db, parsed, minDuration, maxDuration, isFriend
+	if self.filterUnit == unit then
+		db, parsed = self.filterDB, self.filterParsed
+		minDuration, maxDuration = self.filterMinDuration, self.filterMaxDuration
+		isFriend = self.filterIsFriend
+	else
+		local parent = self.__owner
+		db = parent and parent.db and parent.db[self.type]
+		local priority = db and db.priority
+		parsed = (priority and priority ~= "") and UF:GetFilterPriority(priority) or nil
+		minDuration, maxDuration = db and db.minDuration or 0, db and db.maxDuration or 0
+		isFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
+	end
+
 	if not db then return true end
 
 	local isPlayer = (caster == "player" or caster == "vehicle")
-	local isFriend = self.filterIsFriend
-	if self.filterUnit ~= unit then -- PreUpdate has not run for this unit, ask directly
-		isFriend = unit and UnitIsFriend("player", unit) and not UnitCanAttack("player", unit)
-	end
 
 	button.isPlayer = isPlayer
 	button.isFriend = isFriend
@@ -444,11 +465,10 @@ function UF:AuraFilter(unit, button, name, _, _, _, debuffType, duration, expira
 	button.priority = 0
 
 	local noDuration = (not duration or duration == 0)
-	local allowDuration = noDuration or (duration and (duration > 0) and (db.maxDuration == 0 or duration <= db.maxDuration) and (db.minDuration == 0 or duration >= db.minDuration))
+	local allowDuration = noDuration or (duration and (duration > 0) and (maxDuration == 0 or duration <= maxDuration) and (minDuration == 0 or duration >= minDuration))
 	local filterCheck, spellPriority
 
-	if db.priority ~= "" then
-		local parsed = UF:GetFilterPriority(db.priority)
+	if parsed then
 		--! audit perf: isUnit costs a C call and canDispell a method call, but only six filter
 		--! names ever read them, and the default raid/party lists name none of the unit ones.
 		local isUnit, canDispell

@@ -311,7 +311,9 @@ local function Update(self, event, unit)
 
 	--! audit perf: with nothing watched the pass still walked every buff and every debuff of the
 	--! unit on each UNIT_AURA. Nothing below it can match, so leave before the first C call.
-	if not next(icons) then return end
+	--! watchDisabled is set by ElvUI when the indicator is switched off: the icons stay alive but
+	--! none of them can be shown, so the walk is pure loss.
+	if element.watchDisabled or not next(icons) then return end
 
 	local guid = UnitGUID(unit)
 	if not guid then return end

@@ -728,12 +728,17 @@ do
 	local data
 	-- Remove expired auras from a GUID
 	function lib:RemoveExpiredAuras(dstGUID)
-		if self.GUIDAuras[dstGUID] then
-			for filter in pairs(self.GUIDAuras[dstGUID]) do
-				for i = #self.GUIDAuras[dstGUID][filter], 1, -1 do
-					data = self.GUIDAuras[dstGUID][filter][i]
-					if GetTime() > data.expirationTime then
-						tremove(self.GUIDAuras[dstGUID][filter], i)
+		--! audit perf: the four-level chain self.GUIDAuras[dstGUID][filter][i] was re-walked on
+		--! every aura and GetTime() was called inside the innermost loop, though it is constant
+		--! for the whole sweep. Same fix the GUIDAura lookup below already carries.
+		local byFilter = self.GUIDAuras[dstGUID]
+		if byFilter then
+			local now = GetTime()
+			for filter, list in pairs(byFilter) do
+				for i = #list, 1, -1 do
+					data = list[i]
+					if now > data.expirationTime then
+						tremove(list, i)
 					end
 				end
 			end
@@ -1056,8 +1061,10 @@ do
 			--Check caster GUID was given.
 			if srcGUID then
 				--Check if we've seen that caster cast a spell with a duration that doesn't match our own (spec/glphed into something?)
-				if self.GUIDDurations[srcGUID.."-"..spellID] then
-					dur = self.GUIDDurations[srcGUID.."-"..spellID]
+				--! audit perf: the composite key was concatenated twice -- once to test, once to
+				--! read -- allocating a throwaway string per aura with a known caster.
+				dur = self.GUIDDurations[srcGUID.."-"..spellID]
+				if dur then
 					--Check if receiver GUID was given.
 					if dstGUID then
 						--Check if there's dimminshing returns on the spell.

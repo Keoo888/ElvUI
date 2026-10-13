@@ -52,12 +52,12 @@ build from stock ElvUI by looking at it, that is the point — the difference is
 breaks and what the client no longer does twice.
 
 Against the upstream base (`ElvUI-WotLK/ElvUI` master, commit `58ea24f7` = tag 6.09 plus ten
-upstream commits) **47 files differ**: 46 in `ElvUI` and 1 in `ElvUI_OptionsUI`'s bundled Ace3 —
-`+1353 / −415` lines, measured 2026-10-10.
+upstream commits) **49 files differ**: 48 in `ElvUI` and 1 in `ElvUI_OptionsUI`'s bundled Ace3 —
+`+1439 / −438` lines, measured 2026-10-13.
 
 ### What's different
 
-#### Broken on 3.3.5a, now fixed (11 sites)
+#### Broken on 3.3.5a, now fixed (12 sites)
 
 - **A raid member who went offline kept showing as online.** The greyed-out name, the dimmed
   health bar and the portrait all hung on an event that does not exist on this client; they now
@@ -74,18 +74,16 @@ upstream commits) **47 files differ**: 46 in `ElvUI` and 1 in `ElvUI_OptionsUI`'
   State* box (the action bars and the bag bar), *Action Paging*, and the *Search Syntax* help in
   Bags. Opening one gave an error instead of a panel.
 
-#### Real bugs of the original (4)
+#### Real bugs of the original (3)
 
 - **A pushed-back channel showed the wrong delay** — the maximum cast time was printed where the
   delay belongs.
 - **Faders could stick at the wrong transparency.** A 0.33 s fade was re-armed every 0.2 s by the
   range check and so never finished.
-- **The range check ran an extra unit scan** for `party#`/`raid#` ids it already held, because a
-  condition could never be false.
 - **A plugin author using a reserved section name** got "bad argument to 'format'" instead of the
   message explaining what was wrong.
 
-#### Less work per frame (111 sites)
+#### Less work per frame (119 sites)
 
 No FPS number is promised here, and none should be believed from a README. What changed is
 measurable rather than felt: work that produced a result identical to the one already on screen
@@ -105,6 +103,16 @@ was removed.
 - **Aura lists reuse their tables** instead of allocating a new set per update — the garbage
   collector on this client is single-threaded and stops the frame when it runs.
 - **Nameplate glow stopped hiding things that were already hidden** sixty times a second, per plate.
+- **The aura filter reads your settings once per update, not once per aura.** Working out which
+  auras you want shown used to re-read the filter lists and re-parse their priorities for every
+  single aura; measured in a raid at 2317 times a second, now 127.
+- **Nothing is computed twice.** Frame labels were worked out twice on every event, the action bars
+  asked the client who owns the tooltip once per button instead of once per update, and the stance
+  bar rebuilt its button names and looked each one up by name on every refresh.
+- **Expiring auras cost one clock read, not one per aura.** The aura library re-walked the same
+  four-level table path and re-asked the time for every aura in the sweep.
+- **A switched-off indicator costs nothing now.** Turning the buff indicator off only hid it — the
+  full buff-and-debuff scan behind it kept running on every aura change of that unit.
 - **Foreign combat-log lines are dropped first.** The DPS, HPS and coordinate texts used to redraw
   on other people's combat events.
 
@@ -202,11 +210,11 @@ almost none of them. A call to a function that does not exist raises an error on
 actually reaches that line, and a value written where nothing changed raises nothing at all, ever.
 So the work here is an audit with tools rather than a reading.
 
-- **Every edit is marked in the code.** 127 sites carry a `--!` comment saying what was changed and
-  why it has to be that way on this client — 111 cost sites, 12 compatibility fixes, 4 bug fixes
-  (measured 2026-10-10). Nothing is silently different from upstream.
+- **Every edit is marked in the code.** 134 sites carry a `--!` comment saying what was changed and
+  why it has to be that way on this client — 119 cost sites, 12 compatibility fixes, 3 bug fixes
+  (measured 2026-10-13). Nothing is silently different from upstream.
 - **Every finding is in a registry**, with where it is, what the player sees, why it happens, what
-  was done and the proof. 78 records as of 2026-10-10: 60 fixed in this tree, 7 of those already confirmed by
+  was done and the proof. 83 records as of 2026-10-13: 65 fixed in this tree, 7 of those already confirmed by
   an instrumented in-game run, 6 waiting on a decision because the fix would change something you
   see, 10 still open (five of which are defects of the audit tooling, not of the addon), 1 that
   turned out to be a false alarm of the instrument, and 1 deliberately declined.
@@ -269,12 +277,12 @@ Made by Keoo for Warmane.
 перестало ломаться и что клиент перестал делать дважды.
 
 Относительно базы (`ElvUI-WotLK/ElvUI` master, коммит `58ea24f7` = тег 6.09 плюс десять коммитов
-апстрима) **различаются 47 файлов**: 46 в `ElvUI` и 1 в вендорной копии Ace3 внутри
-`ElvUI_OptionsUI` — `+1353 / −415` строк, замер 2026-10-10.
+апстрима) **различаются 49 файлов**: 48 в `ElvUI` и 1 в вендорной копии Ace3 внутри
+`ElvUI_OptionsUI` — `+1439 / −438` строк, замер 2026-10-13.
 
 ### Что изменилось
 
-#### Не работало на 3.3.5a — исправлено (11 мест)
+#### Не работало на 3.3.5a — исправлено (12 мест)
 
 - **Ушедший в оффлайн участник рейда продолжал показываться онлайн.** Серое имя, притушенная полоса
   здоровья и портрет держались на событии, которого на этом клиенте нет; теперь они следуют за
@@ -291,18 +299,16 @@ Made by Keoo for Warmane.
   отображения» (панели команд и панель сумок), «Переключение панелей» и справка «Синтаксис поиска»
   в сумках. Вместо панели открывалась ошибка.
 
-#### Настоящие баги оригинала (4)
+#### Настоящие баги оригинала (3)
 
 - **У отброшенного канала показывалась не та задержка** — на её месте печаталось максимальное время
   каста.
 - **Затухание могло застрять не на той прозрачности.** Затухание длиной 0,33 с перезапускалось
   проверкой дистанции каждые 0,2 с и потому никогда не доходило до конца.
-- **Проверка дистанции делала лишний проход по юнитам** для id вида `party#`/`raid#`, которые у неё
-  уже были, — условие не могло оказаться ложным.
 - **Автор плагина, занявший зарезервированное имя секции**, получал «bad argument to 'format'»
   вместо сообщения о том, что не так.
 
-#### Меньше работы на кадр (111 мест)
+#### Меньше работы на кадр (119 мест)
 
 Никаких обещанных FPS здесь нет, и верить таким обещаниям в README не стоит. Изменилось то, что
 измеряется, а не то, что кажется: убрана работа, результат которой совпадал с уже нарисованным.
@@ -322,6 +328,16 @@ Made by Keoo for Warmane.
   сборщик мусора на этом клиенте однопоточный и останавливает кадр, когда работает.
 - **Свечение неймплейтов перестало скрывать то, что уже скрыто** — шестьдесят раз в секунду на
   каждую плашку.
+- **Фильтр аур читает настройки один раз на обновление, а не на каждую ауру.** Выяснение того, какие
+  ауры вы хотите видеть, перечитывало списки фильтров и разбирало их приоритеты для каждой отдельной
+  ауры; в рейде измерено 2317 раз в секунду, стало 127.
+- **Ничего не вычисляется дважды.** Подписи рамок считались по два раза на каждое событие, панели
+  команд спрашивали клиент о владельце подсказки на каждую кнопку вместо одного раза на обновление,
+  а панель стоек каждый раз заново собирала имена своих кнопок и искала каждое по имени.
+- **На истечение аур уходит одно чтение часов, а не по одному на ауру.** Библиотека аур на каждую
+  проверяемую ауру заново шла по тому же четырёхуровневому пути в таблицах и заново спрашивала время.
+- **Выключенный индикатор больше ничего не стоит.** Выключение индикатора бафов только скрывало
+  его — полный обход бафов и дебаффов за ним продолжался на каждое изменение аур этого юнита.
 - **Чужие строки боевого лога отбрасываются первым делом.** Тексты DPS, HPS и координат
   перерисовывались на чужих боевых событиях.
 
@@ -420,11 +436,11 @@ World of Warcraft\Interface\AddOns\
 управление реально дойдёт до строки, а запись значения там, где ничего не изменилось, не даёт
 ошибки вообще никогда. Поэтому работа здесь — аудит инструментами, а не чтение.
 
-- **Каждая правка помечена в коде.** 127 мест несут комментарий `--!` с тем, что изменено и почему
-  на этом клиенте нужно именно так: 111 мест по стоимости, 12 по совместимости, 4 исправления багов
-  (замер 2026-10-10). Ничто не отличается от апстрима молча.
+- **Каждая правка помечена в коде.** 134 места несут комментарий `--!` с тем, что изменено и почему
+  на этом клиенте нужно именно так: 119 мест по стоимости, 12 по совместимости, 3 исправления багов
+  (замер 2026-10-13). Ничто не отличается от апстрима молча.
 - **Каждая находка лежит в реестре** — где она, что видит игрок, почему так происходит, что
-  сделано и доказательство. На 2026-10-10 — 78 записей: 60 исправлено в этом дереве, 7 из них уже
+  сделано и доказательство. На 2026-10-13 — 83 записи: 65 исправлено в этом дереве, 7 из них уже
   подтверждены игровым прогоном с приборами, 6 ждут решения, потому что правка изменила бы то, что
   игрок видит, 10 ещё открыты (пять из них — дефекты самих инструментов аудита, а не аддона), 1
   оказалась ложной тревогой прибора и 1 отклонена сознательно.

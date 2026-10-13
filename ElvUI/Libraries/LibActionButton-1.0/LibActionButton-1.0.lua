@@ -750,10 +750,12 @@ function OnEvent(frame, event, arg1, ...)
 			end
 		end
 	elseif event == "SPELL_UPDATE_COOLDOWN" then
-		local owner = GameTooltip:GetOwner()
+		--! audit perf: deliberately not hoisted, unlike the branch above. NonActionButtons is
+		--! empty under ElvUI (the only non-action state is the page-11 vehicle exit button), so a
+		--! hoist would pay one C call per fire for a loop that never runs.
 		for button in next, NonActionButtons do
 			UpdateCooldown(button)
-			if owner == button then
+			if GameTooltip:GetOwner() == button then
 				UpdateTooltip(button)
 			end
 		end

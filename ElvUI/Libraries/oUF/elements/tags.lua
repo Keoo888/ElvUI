@@ -547,10 +547,22 @@ local function getTagName(tag)
 end
 
 local function registerEvent(fontstr, event)
-	if(not events[event]) then events[event] = {} end
+	local list = events[event]
+	if(not list) then
+		list = {}
+		events[event] = list
+	end
+
+	--! audit perf: one fontstring used to be inserted once per tag naming the event, and six of
+	--! the ten default text_format strings name one twice -- the raid health default doubles
+	--! UNIT_HEALTH, [power:current] doubles UNIT_MANA. That ran the whole tag string twice per
+	--! fire and doubled the list every other frame walks. Registration-time check, no hot cost.
+	for i = 1, #list do
+		if(list[i] == fontstr) then return end
+	end
 
 	frame:RegisterEvent(event)
-	tinsert(events[event], fontstr)
+	tinsert(list, fontstr)
 end
 
 local function registerEvents(fontstr, tagstr)
