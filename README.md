@@ -27,7 +27,7 @@
 
 ## English
 
-<a href="#about">About</a> · <a href="#whats-different">What's different</a> · <a href="#screenshots">Screenshots</a> · <a href="#installation">Installation</a> · <a href="#commands">Commands</a> · <a href="#how-this-build-is-made">How this build is made</a> · <a href="#compatibility">Compatibility</a> · <a href="#credits">Credits</a>
+<a href="#about">About</a> · <a href="#whats-different">What's different</a> · <a href="#screenshots">Screenshots</a> · <a href="#installation">Installation</a> · <a href="#commands">Commands</a> · <a href="#how-this-build-is-made">How this build is made</a> · <a href="#compatibility">Compatibility</a> · <a href="#license">License</a> · <a href="#credits">Credits</a>
 
 ### About
 
@@ -190,18 +190,16 @@ by this.
 
 ### Commands
 
-| Command | What it does |
-| --- | --- |
-| `/ec`, `/elvui` | open the options window |
-| `/moveui` | move mode — drag frames, numpad to nudge, Alt or Ctrl for ten pixels |
-| `/egrid` | the alignment grid on its own |
-| `/resetui` | run the install wizard again |
-| `/estatus` | a status report you can paste when asking for help |
-| `/cpuimpact` | ElvUI's own CPU meter — type it once to start, again to read the result |
-| `/kb` | key-binding mode for the action bars |
-| `/farmmode` | the farm-mode minimap |
-| `/bgstats` | battleground stats in the data text |
-| `/luaerror on` \| `off` | turn Lua errors on — **this disables every other addon and reloads**; `off` puts them back |
+- `/ec`, `/elvui` — open the options window.
+- `/moveui` — move mode: drag frames, use the numpad to nudge, Alt or Ctrl for ten pixels.
+- `/egrid` — the alignment grid on its own.
+- `/resetui` — run the install wizard again.
+- `/estatus` — a status report you can paste when asking for help.
+- `/cpuimpact` — ElvUI's own CPU meter; type it once to start, again to read the result.
+- `/kb` — key-binding mode for the action bars.
+- `/farmmode` — the farm-mode minimap.
+- `/bgstats` — battleground stats in the data text.
+- `/luaerror on` / `off` — turn Lua errors on (**this disables every other addon and reloads**); `off` puts them back.
 
 ### How this build is made
 
@@ -239,6 +237,14 @@ polyfill, and nothing a player can see is removed or reworded without being aske
   bundled libraries and every public function are upstream's, so anything built for ElvUI 6.09
   loads here unchanged.
 
+<a name="license"></a>
+### License
+
+The upstream ElvUI-WotLK repository does not provide a license file. This build is a
+modified copy of that code and grants no additional rights; ElvUI, TukUI and the bundled
+libraries remain the property of their respective authors. Keep the credits above when
+redistributing this build.
+
 ### Credits
 
 - **ElvUI** — Elv, Bunny and the ElvUI team · [tukui.org](https://www.tukui.org/)
@@ -253,7 +259,7 @@ Made by Keoo for Warmane.
 
 ## Русский
 
-<a href="#о-сборке">О сборке</a> · <a href="#что-изменилось">Что изменилось</a> · <a href="#скриншоты">Скриншоты</a> · <a href="#установка">Установка</a> · <a href="#команды">Команды</a> · <a href="#как-сделана-эта-сборка">Как сделана эта сборка</a> · <a href="#совместимость">Совместимость</a> · <a href="#благодарности">Благодарности</a>
+<a href="#о-сборке">О сборке</a> · <a href="#что-изменилось">Что изменилось</a> · <a href="#скриншоты">Скриншоты</a> · <a href="#установка">Установка</a> · <a href="#команды">Команды</a> · <a href="#как-сделана-эта-сборка">Как сделана эта сборка</a> · <a href="#совместимость">Совместимость</a> · <a href="#лицензия">Лицензия</a> · <a href="#благодарности">Благодарности</a>
 
 ### О сборке
 
@@ -416,18 +422,16 @@ World of Warcraft\Interface\AddOns\
 
 ### Команды
 
-| Команда | Что делает |
-| --- | --- |
-| `/ec`, `/elvui` | открыть окно настроек |
-| `/moveui` | режим перемещения — тащить фреймы, цифровая клавиатура для шага, Alt или Ctrl — десять пикселей |
-| `/egrid` | только сетка выравнивания |
-| `/resetui` | заново запустить мастер установки |
-| `/estatus` | отчёт о состоянии — его удобно приложить к вопросу |
-| `/cpuimpact` | родной счётчик CPU у ElvUI: первый ввод начинает замер, второй показывает результат |
-| `/kb` | режим назначения горячих клавиш для панелей команд |
-| `/farmmode` | режим фарма у миникарты |
-| `/bgstats` | статистика боя за поле в тексте данных |
-| `/luaerror on` \| `off` | включить ошибки Lua — **при этом отключаются все остальные аддоны и идёт перезагрузка**; `off` возвращает их |
+- `/ec`, `/elvui` — открыть окно настроек.
+- `/moveui` — режим перемещения: тащить фреймы, цифровая клавиатура для шага, Alt или Ctrl — десять пикселей.
+- `/egrid` — только сетка выравнивания.
+- `/resetui` — заново запустить мастер установки.
+- `/estatus` — отчёт о состоянии, его удобно приложить к вопросу.
+- `/cpuimpact` — родной счётчик CPU у ElvUI: первый ввод начинает замер, второй показывает результат.
+- `/kb` — режим назначения горячих клавиш для панелей команд.
+- `/farmmode` — режим фарма у миникарты.
+- `/bgstats` — статистика боя за поле в тексте данных.
+- `/luaerror on` / `off` — включить ошибки Lua (**при этом отключаются все остальные аддоны и идёт перезагрузка**); `off` возвращает их.
 
 ### Как сделана эта сборка
 
@@ -465,6 +469,13 @@ World of Warcraft\Interface\AddOns\
 - **Плагины ElvUI продолжают работать.** Ничто не переименовано, не перенесено и не удалено:
   раскладка модулей, встроенные библиотеки и все публичные функции — апстримовские, поэтому всё
   сделанное под ElvUI 6.09 загружается здесь без изменений.
+
+<a name="лицензия"></a>
+### Лицензия
+
+В репозитории ElvUI-WotLK нет файла лицензии. Эта сборка — изменённая копия того кода
+и не даёт дополнительных прав; ElvUI, TukUI и встроенные библиотеки остаются
+собственностью их авторов. При распространении сборки сохраняйте кредиты выше.
 
 ### Благодарности
 
