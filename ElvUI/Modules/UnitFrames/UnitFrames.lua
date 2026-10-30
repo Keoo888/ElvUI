@@ -1307,6 +1307,14 @@ function UF:ToggleTransparentStatusBar(isTransparent, statusBar, backdropTex, ad
 		if statusBar.texture then statusBar.texture = statusBar:GetStatusBarTexture() end --Needed for Power element
 
 		UF:SetStatusBarBackdropPoints(statusBar, statusBarTex, backdropTex, statusBarOrientation)
+
+		--! audit fix: SetTemplate("Transparent") resets the backdrop to the template colour, and the visible
+		-- colour of a transparent bar is carried by that backdrop -- painted only from the SetStatusBarColor
+		-- hook below. oUF now skips SetStatusBarColor when the colour is unchanged, so a bar switched to
+		-- transparent kept the dark template backdrop until its colour changed (new target, other class).
+		-- Repaint the backdrop with the bar's current colour right away, for every frame the toggle reaches.
+		local r, g, b = statusBar:GetStatusBarColor()
+		if r then UF.UpdateBackdropTextureColor(statusBar, r, g, b) end
 	else
 		if statusBar.backdrop then
 			statusBar.backdrop:SetTemplate(nil, nil, nil, not statusBar.PostCastStart and self.thinBorders, true)
